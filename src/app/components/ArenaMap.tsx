@@ -1,261 +1,25 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 
-interface ArenaTile {
-  x: number; y: number;
-  tileType: string;
-  hasResource: boolean;
-  resourceType?: string | null;
-}
+// ─── Interfaces ──────────────────────────────────────────────────────────────
+
+interface ArenaTile { x: number; y: number; tileType: string; hasResource: boolean; resourceType?: string | null; }
 interface RosterEntry { tf: any; fighter: any; }
-interface LiveEventLite {
-  id: number; hour: number; eventType: string; description: string;
-  x?: number | null; y?: number | null;
-}
+interface LiveEventLite { id: number; hour: number; eventType: string; description: string; x?: number | null; y?: number | null; }
 interface ArenaMapProps {
-  width: number; height: number;
-  tiles: ArenaTile[];
-  roster: RosterEntry[];
-  events?: LiveEventLite[];
-  currentHour?: number;
-  selectedFighterId?: number | null;
-  onSelectFighter?: (fighterId: number) => void;
+  width: number; height: number; tiles: ArenaTile[]; roster: RosterEntry[];
+  events?: LiveEventLite[]; currentHour?: number;
+  selectedFighterId?: number | null; onSelectFighter?: (id: number) => void;
 }
+interface Pt { x: number; y: number; }
 
-// ─── Constants ──────────────────────────────────────────────────────────────
+// ─── Terrain constants ───────────────────────────────────────────────────────
 
-const TW   = 100;   // isometric tile diamond width
-const TH   = 50;    // isometric tile diamond height
-const EH   = 26;    // elevation units → screen pixels
+const BASE_TW = 96, BASE_TH = 48, BASE_EH = 28;
 
-// Terrain base and noise elevations
-const BASE_ELEV: Record<string, number> = {
-  WATER: 0, PLAIN: 2, SHELTER: 2, RUINS: 3, FOREST: 3, DANGER: 7, CORNUCOPIA: 2,
-};
-const NOISE_ELEV: Record<string, number> = {
-  WATER: 0, PLAIN: 3, SHELTER: 2, RUINS: 3, FOREST: 3, DANGER: 5, CORNUCOPIA: 0,
-};
+const BASE_ELEV: Record<string, number> = { WATER:0, PLAIN:2, SHELTER:2, RUINS:3, FOREST:3, DANGER:7, CORNUCOPIA:2 };
+const NOISE_ELEV: Record<string, number> = { WATER:0, PLAIN:3, SHELTER:2, RUINS:3, FOREST:3, DANGER:5, CORNUCOPIA:0 };
 
-// ─── Noise / elevation helpers ──────────────────────────────────────────────
-
-function fract(n: number) { return n - Math.floor(n); }
-function hash(x: number, y: number): number {
-  return fract(Math.sin(x * 127.1 + y * 311.7 + x * y * 0.07) * 43758.5453123);
-}
-// Smooth noise for organic terrain
-function smoothNoise(x: number, y: number): number {
-  const ix = Math.floor(x), iy = Math.floor(y);
-  const fx = fract(x), fy = fract(y);
-  const ux = fx * fx * (3 - 2 * fx);
-  const uy = fy * fy * (3 - 2 * fy);
-  return (
-    hash(ix,   iy)   * (1 - ux) * (1 - uy) +
-    hash(ix+1, iy)   * ux       * (1 - uy) +
-    hash(ix,   iy+1) * (1 - ux) * uy       +
-    hash(ix+1, iy+1) * ux       * uy
-  );
-}
-function tileCenterElev(tx: number, ty: number, tt: string): number {
-  const base  = BASE_ELEV[tt]  ?? 2;
-  const noise = NOISE_ELEV[tt] ?? 2;
-  // Multi-octave smooth noise for organic lumps
-  const n = smoothNoise(tx * 0.7, ty * 0.7) * 0.6 +
-            smoothNoise(tx * 1.4 + 3.3, ty * 1.4 + 1.7) * 0.3 +
-            smoothNoise(tx * 2.8 + 7.1, ty * 2.8 + 4.3) * 0.1;
-  return base + n * noise;
-}
-
-// Vertex elevation = weighted average of surrounding tile centers → smooth slopes
-function buildVertexElevGrid(
-  W: number, H: number,
-  tileTypeAt: (tx: number, ty: number) => string
-): Float32Array {
-  const verts = new Float32Array((W + 1) * (H + 1));
-  for (let vy = 0; vy <= H; vy++) {
-    for (let vx = 0; vx <= W; vx++) {
-      // The four tiles that share this vertex
-      const neighbours: [number, number][] = [
-        [vx-1, vy-1], [vx, vy-1], [vx-1, vy], [vx, vy],
-      ].filter(([tx, ty]) => tx >= 0 && tx < W && ty >= 0 && ty < H) as [number,number][];
-      const elev = neighbours.length === 0 ? 0
-        : neighbours.reduce((s, [tx, ty]) => s + tileCenterElev(tx, ty, tileTypeAt(tx, ty)), 0) / neighbours.length;
-      verts[vy * (W + 1) + vx] = elev;
-    }
-  }
-  return verts;
-}
-
-// ─── Colour helpers ──────────────────────────────────────────────────────────
-
-function hexToRgb(hex: string): [number, number, number] {
-  return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)];
-}
-function rgbToHex(r: number, g: number, b: number): string {
-  return '#' + [r,g,b].map(v => Math.max(0,Math.min(255,Math.round(v))).toString(16).padStart(2,'0')).join('');
-}
-function lerpColor(a: string, b: string, t: number): string {
-  const [ar,ag,ab] = hexToRgb(a), [br,bg,bb] = hexToRgb(b);
-  return rgbToHex(ar+(br-ar)*t, ag+(bg-ag)*t, ab+(bb-ab)*t);
-}
-function darken(hex: string, amt: number): string {
-  const [r,g,b] = hexToRgb(hex); return rgbToHex(r*(1-amt), g*(1-amt), b*(1-amt));
-}
-function lighten(hex: string, amt: number): string {
-  const [r,g,b] = hexToRgb(hex); return rgbToHex(r+(255-r)*amt, g+(255-g)*amt, b+(255-b)*amt);
-}
-
-// Elevation-based natural terrain colour (base layer, blended with biome)
-function elevColor(elev: number): string {
-  const stops: [number, string][] = [
-    [0,  '#2e6fa8'],  // deep water
-    [1,  '#3d8fc4'],  // shallow water
-    [2,  '#4e9e3c'],  // lowland green
-    [3,  '#5aaa44'],  // lush plain
-    [4,  '#4a8c34'],  // plateau green
-    [5,  '#6e7c4c'],  // highland
-    [6,  '#7e6c50'],  // rocky slope
-    [7,  '#8a7458'],  // rock
-    [8,  '#7a7060'],  // grey rock
-    [9,  '#909090'],  // stone
-    [10, '#b8bcc0'],  // sub-snow
-    [12, '#dce8f0'],  // snow cap
-  ];
-  for (let i = 0; i < stops.length - 1; i++) {
-    const [e0, c0] = stops[i];
-    const [e1, c1] = stops[i+1];
-    if (elev <= e1) {
-      const t = (elev - e0) / (e1 - e0);
-      return lerpColor(c0, c1, Math.max(0, Math.min(1, t)));
-    }
-  }
-  return stops[stops.length-1][1];
-}
-
-// Biome tint blended on top of the elevation colour
-const BIOME_TINT: Record<string, [string, number]> = {
-  PLAIN:      ['#5ab040', 0.28],
-  FOREST:     ['#1e5818', 0.50],
-  WATER:      ['#2460a0', 0.60],
-  RUINS:      ['#907040', 0.40],
-  SHELTER:    ['#3a6c30', 0.30],
-  DANGER:     ['#707060', 0.22],
-  CORNUCOPIA: ['#c8a020', 0.45],
-};
-function tileTopColor(tx: number, ty: number, tt: string, avgElev: number): string {
-  const base = elevColor(avgElev);
-  const [tint, weight] = BIOME_TINT[tt] ?? ['#808080', 0.2];
-  // Add per-tile micro-variation
-  const v = (hash(tx*3+1, ty*5+2) - 0.5) * 0.08;
-  const c = lerpColor(base, tint, weight);
-  const [r,g,b] = hexToRgb(c);
-  return rgbToHex(r+(255-r)*Math.max(0,v), g+(255-g)*Math.max(0,v), b+(255-b)*Math.max(0,v));
-}
-
-// Side-face earth colour (cliff cross-section)
-function sideColor(avgElev: number, face: 'left'|'right'): string {
-  const base = avgElev < 1.5 ? '#1a3a60'
-             : avgElev < 3   ? '#3a4c28'
-             : avgElev < 6   ? '#5a4830'
-             : avgElev < 9   ? '#504840'
-             :                 '#787474';
-  return face === 'left' ? darken(base, 0.22) : darken(base, 0.12);
-}
-
-// ─── ISO helpers ─────────────────────────────────────────────────────────────
-
-function v2s(vx: number, vy: number, elev: number, ox: number, oy: number) {
-  return {
-    x: (vx - vy) * (TW / 2) + ox,
-    y: (vx + vy) * (TH / 2) + oy - elev * EH,
-  };
-}
-
-// ─── Canvas drawing ──────────────────────────────────────────────────────────
-
-function drawQuad(
-  ctx: CanvasRenderingContext2D,
-  p0: {x:number;y:number}, p1: {x:number;y:number},
-  p2: {x:number;y:number}, p3: {x:number;y:number},
-  fill: string | CanvasGradient
-) {
-  ctx.beginPath();
-  ctx.moveTo(p0.x, p0.y);
-  ctx.lineTo(p1.x, p1.y);
-  ctx.lineTo(p2.x, p2.y);
-  ctx.lineTo(p3.x, p3.y);
-  ctx.closePath();
-  ctx.fillStyle = fill;
-  ctx.fill();
-}
-
-function drawTopFace(
-  ctx: CanvasRenderingContext2D,
-  n: {x:number;y:number}, e: {x:number;y:number},
-  s: {x:number;y:number}, w: {x:number;y:number},
-  color: string, tt: string
-) {
-  // Gradient: simulate sunlight from top-left
-  const gx = ctx.createLinearGradient(w.x, n.y, e.x, s.y);
-  gx.addColorStop(0,   lighten(color, 0.20));
-  gx.addColorStop(0.35, lighten(color, 0.06));
-  gx.addColorStop(1,   darken(color, 0.18));
-  drawQuad(ctx, n, e, s, w, gx);
-
-  // Water gets a specular shimmer band
-  if (tt === 'WATER') {
-    const sh = ctx.createLinearGradient(n.x, n.y, s.x, s.y);
-    sh.addColorStop(0,   'rgba(180,220,255,0.22)');
-    sh.addColorStop(0.4, 'rgba(100,180,255,0.08)');
-    sh.addColorStop(1,   'rgba(20,80,160,0.06)');
-    drawQuad(ctx, n, e, s, w, sh);
-  }
-  // Forest gets subtle canopy darkening in concave areas
-  if (tt === 'FOREST') {
-    const da = ctx.createRadialGradient(
-      (n.x+e.x+s.x+w.x)/4, (n.y+e.y+s.y+w.y)/4, 2,
-      (n.x+e.x+s.x+w.x)/4, (n.y+e.y+s.y+w.y)/4, TW*0.6
-    );
-    da.addColorStop(0,   'rgba(0,0,0,0.12)');
-    da.addColorStop(0.6, 'rgba(0,0,0,0.04)');
-    da.addColorStop(1,   'rgba(0,0,0,0)');
-    drawQuad(ctx, n, e, s, w, da);
-  }
-}
-
-function drawSideFace(
-  ctx: CanvasRenderingContext2D,
-  topA: {x:number;y:number}, topB: {x:number;y:number},
-  botA: {x:number;y:number}, botB: {x:number;y:number},
-  color: string
-) {
-  const g = ctx.createLinearGradient(topA.x, topA.y, botA.x, botA.y);
-  g.addColorStop(0, darken(color, 0.05));
-  g.addColorStop(1, darken(color, 0.45));
-  drawQuad(ctx, topA, topB, botB, botA, g);
-  // Edge line
-  ctx.beginPath();
-  ctx.moveTo(topA.x, topA.y);
-  ctx.lineTo(topB.x, topB.y);
-  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
-  ctx.lineWidth = 0.6;
-  ctx.stroke();
-}
-
-// ─── Fighter / resource icon consts ─────────────────────────────────────────
-
-const TERRAIN_PROPS: Record<string, string[]> = {
-  PLAIN:  ['', '🌾', '', '🌿'],
-  FOREST: ['🌲', '🌳', '🌲', '🌲'],
-  WATER:  ['', '〰️', '', ''],
-  RUINS:  ['🏛️', '🧱', '🪨', ''],
-  SHELTER:['⛺', '', '🏚️', ''],
-  DANGER: ['⛰️', '🪨', '', '🪨'],
-  CORNUCOPIA: ['👑', '✨', '👑', '✨'],
-};
-const RESOURCE_ICONS: Record<string, string> = {
-  FOOD:'🍖', WATER:'💧', MEDKIT:'🩹', WEAPON:'⚔️',
-  ARMOR:'🛡️', INTEL:'📡', SMOKE:'💨', TRAP:'🪤',
-};
 const ARCHETYPE_COLORS: Record<string, string> = {
   AGGRESSIVE:'#e05548', STRATEGIC:'#4a8de0', COWARDLY:'#9a9a9a',
   DIPLOMATIC:'#4ae09c', BETRAYER:'#b04ae0', SURVIVALIST:'#e0c14a',
@@ -264,289 +28,552 @@ const EVENT_BURST_ICONS: Record<string, string> = {
   KILL:'⚔️', ALLIANCE:'🤝', BETRAYAL:'🗡️', FLEE:'💨',
   TRAP:'⚠️', ELIMINATION:'💀', SPONSOR:'🎁', COMBAT:'💥', PHASE:'📢',
 };
+const RESOURCE_ICONS: Record<string, string> = {
+  FOOD:'🍖', WATER:'💧', MEDKIT:'🩹', WEAPON:'⚔️', ARMOR:'🛡️', INTEL:'📡', SMOKE:'💨', TRAP:'🪤',
+};
 
-// ─── Main component ──────────────────────────────────────────────────────────
+// ─── Noise ───────────────────────────────────────────────────────────────────
 
-export function ArenaMap({
-  width, height, tiles, roster, events = [],
-  currentHour, selectedFighterId, onSelectFighter,
-}: ArenaMapProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [hoveredFighter, setHoveredFighter] = useState<{
-    fighter: any; tf: any; sx: number; sy: number;
-  } | null>(null);
-  const [burst, setBurst] = useState<{id:number;icon:string;sx:number;sy:number}|null>(null);
+function fract(n: number) { return n - Math.floor(n); }
+function hash2(x: number, y: number) { return fract(Math.sin(x * 127.1 + y * 311.7 + x * y * 0.07) * 43758.5453); }
+function smoothstep(t: number) { return t * t * (3 - 2 * t); }
+function smoothNoise(x: number, y: number): number {
+  const ix = Math.floor(x), iy = Math.floor(y);
+  const fx = smoothstep(fract(x)), fy = smoothstep(fract(y));
+  return (
+    hash2(ix,iy)*(1-fx)*(1-fy) + hash2(ix+1,iy)*fx*(1-fy) +
+    hash2(ix,iy+1)*(1-fx)*fy   + hash2(ix+1,iy+1)*fx*fy
+  );
+}
+function fbm(x: number, y: number, octaves = 4): number {
+  let v = 0, amp = 0.5, freq = 1, max = 0;
+  for (let i = 0; i < octaves; i++) {
+    v += smoothNoise(x * freq, y * freq) * amp;
+    max += amp; amp *= 0.5; freq *= 2.1;
+  }
+  return v / max;
+}
 
-  const W = width, H = height;
+function tileCenterElev(tx: number, ty: number, tt: string): number {
+  const n = fbm(tx * 0.55 + 0.3, ty * 0.55 + 0.7);
+  return (BASE_ELEV[tt] ?? 2) + n * (NOISE_ELEV[tt] ?? 2);
+}
 
-  const tileAt = useCallback((tx: number, ty: number) =>
-    tiles.find(t => Number(t.x) === tx && Number(t.y) === ty),
-  [tiles]);
+function buildVertGrid(W: number, H: number, tileType: (tx: number, ty: number) => string): Float32Array {
+  const verts = new Float32Array((W+1) * (H+1));
+  // Compute raw vertex elevations
+  for (let vy = 0; vy <= H; vy++) {
+    for (let vx = 0; vx <= W; vx++) {
+      const ns: [number,number][] = [[vx-1,vy-1],[vx,vy-1],[vx-1,vy],[vx,vy]]
+        .filter(([tx,ty]) => tx>=0&&tx<W&&ty>=0&&ty<H) as [number,number][];
+      verts[vy*(W+1)+vx] = ns.length===0 ? 0
+        : ns.reduce((s,[tx,ty]) => s + tileCenterElev(tx,ty,tileType(tx,ty)), 0) / ns.length;
+    }
+  }
+  // Gaussian blur (3 passes) for smooth slopes
+  const tmp = new Float32Array(verts.length);
+  for (let pass = 0; pass < 3; pass++) {
+    for (let vy = 0; vy <= H; vy++) {
+      for (let vx = 0; vx <= W; vx++) {
+        let sum = 0, w = 0;
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+          const nx = vx+dx, ny = vy+dy;
+          if (nx<0||nx>W||ny<0||ny>H) continue;
+          const weight = Math.exp(-(dx*dx+dy*dy)/2.5);
+          sum += verts[ny*(W+1)+nx] * weight; w += weight;
+        }
+        tmp[vy*(W+1)+vx] = sum / w;
+      }
+    }
+    verts.set(tmp);
+  }
+  return verts;
+}
+
+// ─── Color helpers ────────────────────────────────────────────────────────────
+
+function hexRgb(h: string): [number,number,number] {
+  return [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
+}
+function rgbHex(r: number, g: number, b: number) {
+  return '#'+[r,g,b].map(v=>Math.max(0,Math.min(255,Math.round(v))).toString(16).padStart(2,'0')).join('');
+}
+function lerpc(a: string, b: string, t: number): string {
+  const [ar,ag,ab]=hexRgb(a), [br,bg,bb]=hexRgb(b);
+  return rgbHex(ar+(br-ar)*t, ag+(bg-ag)*t, ab+(bb-ab)*t);
+}
+function darken(h: string, a: number) { const [r,g,b]=hexRgb(h); return rgbHex(r*(1-a),g*(1-a),b*(1-a)); }
+function lighten(h: string, a: number) { const [r,g,b]=hexRgb(h); return rgbHex(r+(255-r)*a,g+(255-g)*a,b+(255-b)*a); }
+
+// Elevation→color ramp (natural altitude colours)
+function elevColor(e: number): string {
+  const stops: [number,string][] = [
+    [0,'#1e4870'], [0.8,'#2a5e90'], [1.5,'#3d7830'], [3,'#4e9c3c'],
+    [4.5,'#5aaa44'], [5.5,'#6c8050'], [7,'#7e6a50'], [8.5,'#886a58'],
+    [10,'#909090'], [11.5,'#b8bec2'], [13,'#dce8f0'],
+  ];
+  for (let i=0; i<stops.length-1; i++) {
+    const [e0,c0]=stops[i],[e1,c1]=stops[i+1];
+    if (e<=e1) return lerpc(c0,c1,Math.max(0,Math.min(1,(e-e0)/(e1-e0))));
+  }
+  return '#e8f0f8';
+}
+const BIOME_TINT: Record<string,[string,number]> = {
+  PLAIN:['#5ab040',0.25], FOREST:['#1e5010',0.55], WATER:['#1e50a0',0.65],
+  RUINS:['#907840',0.40], SHELTER:['#3c7030',0.28], DANGER:['#6c6860',0.22],
+  CORNUCOPIA:['#c8a020',0.50],
+};
+function topColor(tx: number, ty: number, tt: string, elev: number): string {
+  const base = elevColor(elev);
+  const [tint,w] = BIOME_TINT[tt] ?? ['#808080',0.2];
+  const v = (hash2(tx*5+2, ty*7+3) - 0.5) * 0.08;
+  const c = lerpc(base, tint, w);
+  const [r,g,b] = hexRgb(c);
+  return rgbHex(r+(255-r)*Math.max(0,v), g+(255-g)*Math.max(0,v), b+(255-b)*Math.max(0,v));
+}
+function sideColor(elev: number, face: 'L'|'R'): string {
+  const base = elev<1.2 ? '#1a3058' : elev<3 ? '#2c4020' : elev<6 ? '#4a3820' : elev<10 ? '#504840' : '#787478';
+  return face==='L' ? darken(base,0.28) : darken(base,0.14);
+}
+
+// ─── Bilinear interpolation within a quad ────────────────────────────────────
+
+function blerp(n: Pt, e: Pt, s: Pt, w: Pt, u: number, v: number): Pt {
+  const top = {x: n.x+(e.x-n.x)*u, y: n.y+(e.y-n.y)*u};
+  const bot = {x: w.x+(s.x-w.x)*u, y: w.y+(s.y-w.y)*u};
+  return {x: top.x+(bot.x-top.x)*v, y: top.y+(bot.y-top.y)*v};
+}
+
+// ─── Texture painters (no clip needed — elements stay well inside quads) ─────
+
+function drawGrass(ctx: CanvasRenderingContext2D, n: Pt, e: Pt, s: Pt, w: Pt, color: string) {
+  for (let i = 0; i < 10; i++) {
+    const u = (i*0.618+0.08)%0.88 + 0.06;
+    const v = (i*0.381+0.10)%0.80 + 0.10;
+    const p = blerp(n,e,s,w,u,v);
+    const dark = i%3===0;
+    ctx.strokeStyle = dark ? darken(color,0.25) : lighten(color,0.18);
+    ctx.lineWidth = 0.9;
+    ctx.beginPath(); ctx.moveTo(p.x, p.y+4); ctx.quadraticCurveTo(p.x-1,p.y+1,p.x-2,p.y-2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(p.x+1,p.y+4); ctx.quadraticCurveTo(p.x+3,p.y+1,p.x+3,p.y-2); ctx.stroke();
+  }
+  // Scattered small dots (wildflowers/pebbles)
+  for (let i = 0; i < 4; i++) {
+    const u = (i*0.29+0.15)%0.75 + 0.12;
+    const v = (i*0.47+0.20)%0.70 + 0.15;
+    const p = blerp(n,e,s,w,u,v);
+    ctx.fillStyle = i%2===0 ? 'rgba(255,240,80,0.7)' : 'rgba(255,255,255,0.5)';
+    ctx.beginPath(); ctx.arc(p.x,p.y,1.0,0,Math.PI*2); ctx.fill();
+  }
+}
+
+function drawForest(ctx: CanvasRenderingContext2D, n: Pt, e: Pt, s: Pt, w: Pt, color: string) {
+  for (let i = 0; i < 5; i++) {
+    const u = (i*0.618+0.12)%0.80 + 0.10;
+    const v = (i*0.381+0.12)%0.76 + 0.12;
+    const p = blerp(n,e,s,w,u,v);
+    const r = 5 + hash2(p.x*0.1,p.y*0.1)*4;
+    const g1 = ctx.createRadialGradient(p.x-1,p.y-1,0,p.x,p.y,r);
+    g1.addColorStop(0, lighten(color,0.30));
+    g1.addColorStop(0.6, color);
+    g1.addColorStop(1, darken(color,0.40));
+    ctx.fillStyle = g1;
+    ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2); ctx.fill();
+    // Trunk dot
+    ctx.fillStyle = 'rgba(40,20,10,0.55)';
+    ctx.beginPath(); ctx.arc(p.x,p.y+r*0.5,1.2,0,Math.PI*2); ctx.fill();
+  }
+}
+
+function drawWater(ctx: CanvasRenderingContext2D, n: Pt, e: Pt, s: Pt, w: Pt, _color: string, frame: number) {
+  ctx.strokeStyle = 'rgba(180,220,255,0.30)';
+  ctx.lineWidth = 1.2;
+  for (let i = 0; i < 5; i++) {
+    const v = 0.15 + i * 0.16;
+    const amp = 2.5;
+    ctx.beginPath();
+    for (let u = 0.05; u <= 0.95; u += 0.04) {
+      const p = blerp(n,e,s,w,u,v);
+      const wave = Math.sin(u * 8 + frame * 0.05 + i * 1.2) * amp;
+      if (u <= 0.05) ctx.moveTo(p.x, p.y + wave);
+      else ctx.lineTo(p.x, p.y + wave);
+    }
+    ctx.stroke();
+  }
+  // Specular highlight spot
+  const cx = blerp(n,e,s,w,0.35,0.30);
+  const g = ctx.createRadialGradient(cx.x,cx.y,1,cx.x,cx.y,10);
+  g.addColorStop(0,'rgba(220,240,255,0.35)'); g.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx.x,cx.y,10,0,Math.PI*2); ctx.fill();
+}
+
+function drawRubble(ctx: CanvasRenderingContext2D, n: Pt, e: Pt, s: Pt, w: Pt, color: string) {
+  for (let i = 0; i < 7; i++) {
+    const u = (i*0.618+0.08)%0.86 + 0.07;
+    const v = (i*0.381+0.10)%0.82 + 0.09;
+    const p = blerp(n,e,s,w,u,v);
+    const sz = 2 + hash2(p.x*0.2,p.y*0.3)*3;
+    const angle = hash2(p.x*0.3,p.y*0.5)*Math.PI;
+    ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(angle);
+    ctx.fillStyle = i%2===0 ? lighten(color,0.15) : darken(color,0.25);
+    ctx.fillRect(-sz/2,-sz/3,sz,sz*0.65); ctx.restore();
+  }
+}
+
+function drawRockCracks(ctx: CanvasRenderingContext2D, n: Pt, e: Pt, s: Pt, w: Pt, color: string) {
+  for (let i = 0; i < 5; i++) {
+    const u0 = (i*0.618+0.1)%0.8 + 0.1;
+    const v0 = (i*0.381+0.1)%0.8 + 0.1;
+    const p0 = blerp(n,e,s,w,u0,v0);
+    const angle = hash2(u0*10,v0*10)*Math.PI*2;
+    const len = 6 + hash2(u0*7,v0*9)*8;
+    ctx.strokeStyle = i%2===0 ? darken(color,0.45) : darken(color,0.30);
+    ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    ctx.moveTo(p0.x,p0.y);
+    ctx.lineTo(p0.x+Math.cos(angle)*len, p0.y+Math.sin(angle)*len*0.5);
+    ctx.stroke();
+  }
+  // Scattered pebbles
+  for (let i = 0; i < 5; i++) {
+    const u = (i*0.31+0.15)%0.80+0.10;
+    const v = (i*0.57+0.15)%0.76+0.12;
+    const p = blerp(n,e,s,w,u,v);
+    ctx.fillStyle = lighten(color,0.10);
+    ctx.beginPath(); ctx.ellipse(p.x,p.y,2.5,1.4,hash2(p.x,p.y)*Math.PI,0,Math.PI*2); ctx.fill();
+  }
+}
+
+function drawTexture(ctx: CanvasRenderingContext2D, tt: string, n: Pt, e: Pt, s: Pt, w: Pt, color: string, frame: number) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(n.x,n.y); ctx.lineTo(e.x,e.y); ctx.lineTo(s.x,s.y); ctx.lineTo(w.x,w.y);
+  ctx.closePath(); ctx.clip();
+  switch (tt) {
+    case 'PLAIN':  drawGrass(ctx,n,e,s,w,color); break;
+    case 'FOREST': drawForest(ctx,n,e,s,w,color); break;
+    case 'WATER':  drawWater(ctx,n,e,s,w,color,frame); break;
+    case 'RUINS':  drawRubble(ctx,n,e,s,w,color); break;
+    case 'DANGER': drawRockCracks(ctx,n,e,s,w,color); break;
+    case 'SHELTER':drawGrass(ctx,n,e,s,w,color); break;
+  }
+  ctx.restore();
+}
+
+// ─── Projection with camera rotation & zoom ───────────────────────────────────
+
+function project(gx: number, gy: number, gz: number, rot: number, zoom: number, OX: number, OY: number, CX: number, CY: number): Pt {
+  const dx = gx - CX, dy = gy - CY;
+  const c = Math.cos(rot), s = Math.sin(rot);
+  const rx = dx*c - dy*s, ry = dx*s + dy*c;
+  return {
+    x: (rx - ry) * (BASE_TW/2) * zoom + OX,
+    y: (rx + ry) * (BASE_TH/2) * zoom - gz * BASE_EH * zoom + OY,
+  };
+}
+
+function tileDepth(tx: number, ty: number, rot: number, CX: number, CY: number): number {
+  const dx = tx+0.5-CX, dy = ty+0.5-CY;
+  const c = Math.cos(rot), s = Math.sin(rot);
+  const rx = dx*c-dy*s, ry = dx*s+dy*c;
+  return rx + ry; // standard iso depth (ascending = back to front)
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
+export function ArenaMap({ width: W, height: H, tiles, roster, events=[], currentHour, selectedFighterId, onSelectFighter }: ArenaMapProps) {
+  const canvasRef  = useRef<HTMLCanvasElement>(null);
+  const frameRef   = useRef(0);
+  const rafRef     = useRef<number>(0);
+  const vertRef    = useRef<Float32Array | null>(null);
+  const isDragging = useRef(false);
+  const lastMouseX = useRef(0);
+  const lastMouseY = useRef(0);
+
+  const [rotation, setRotation] = useState(Math.PI * 0.25); // start standard iso
+  const [zoom, setZoom]         = useState(1.0);
+  const [hoveredFighter, setHoveredFighter] = useState<{fighter:any;tf:any;sx:number;sy:number}|null>(null);
+  const [burst, setBurst]       = useState<{id:number;icon:string;sx:number;sy:number}|null>(null);
+  const [animFrame, setAnimFrame] = useState(0); // drives water animation
+
+  const CX = W / 2, CY = H / 2;
+
+  // Canvas sizing — keep fixed, content inside pans/zooms
+  const CANVAS_W = 900, CANVAS_H = 540;
+  const OX = CANVAS_W / 2, OY = CANVAS_H * 0.55;
 
   const tileTypeAt = useCallback((tx: number, ty: number): string =>
-    tileAt(tx, ty)?.tileType ?? 'PLAIN',
-  [tileAt]);
+    tiles.find(t => Number(t.x)===tx && Number(t.y)===ty)?.tileType ?? 'PLAIN',
+  [tiles]);
 
-  // Build vertex elevation grid (only when tiles/dimensions change)
-  const vertElevRef = useRef<Float32Array | null>(null);
+  // Rebuild vertex elevation when tiles change
   useEffect(() => {
-    vertElevRef.current = buildVertexElevGrid(W, H, tileTypeAt);
+    vertRef.current = buildVertGrid(W, H, tileTypeAt);
   }, [W, H, tileTypeAt]);
 
   const getVE = useCallback((vx: number, vy: number): number => {
-    if (!vertElevRef.current) return 0;
-    const cVx = Math.max(0, Math.min(W, vx));
-    const cVy = Math.max(0, Math.min(H, vy));
-    return vertElevRef.current[cVy * (W + 1) + cVx];
+    if (!vertRef.current) return 0;
+    const cx = Math.max(0, Math.min(W, vx)), cy = Math.max(0, Math.min(H, vy));
+    return vertRef.current[cy*(W+1)+cx];
   }, [W, H]);
 
-  // Canvas dimensions — generous head-room for mountains
-  const MAX_ELEV_PX = 14 * EH;
-  const mapW = (W + H) * (TW / 2) + TW * 2;
-  const mapH = (W + H) * (TH / 2) + MAX_ELEV_PX + TH * 3;
-  const OX   = mapW / 2;
-  const OY   = MAX_ELEV_PX + TH;
+  const proj = useCallback((gx: number, gy: number, gz: number) =>
+    project(gx, gy, gz, rotation, zoom, OX, OY, CX, CY),
+  [rotation, zoom, OX, OY, CX, CY]);
 
-  const getScreen = useCallback((vx: number, vy: number) => {
-    const elev = getVE(vx, vy);
-    return v2s(vx, vy, elev, OX, OY);
-  }, [getVE, OX, OY]);
+  const getVScreen = useCallback((vx: number, vy: number) => {
+    const e = getVE(vx, vy);
+    return proj(vx, vy, e);
+  }, [getVE, proj]);
 
-  // ── Draw ──────────────────────────────────────────────────────────────────
+  // ── Draw ────────────────────────────────────────────────────────────────────
 
-  useEffect(() => {
-    if (!vertElevRef.current) return;
+  const draw = useCallback(() => {
+    if (!vertRef.current) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    canvas.width  = mapW * dpr;
-    canvas.height = mapH * dpr;
-    canvas.style.width  = `${mapW}px`;
-    canvas.style.height = `${mapH}px`;
+    if (canvas.width !== CANVAS_W * dpr) {
+      canvas.width  = CANVAS_W * dpr;
+      canvas.height = CANVAS_H * dpr;
+      canvas.style.width  = `${CANVAS_W}px`;
+      canvas.style.height = `${CANVAS_H}px`;
+    }
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    ctx.scale(dpr, dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    // Sky gradient
-    const sky = ctx.createLinearGradient(0, 0, 0, mapH * 0.5);
-    sky.addColorStop(0, '#06080e');
-    sky.addColorStop(1, '#0d1520');
-    ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, mapW, mapH);
+    // Sky
+    const sky = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+    sky.addColorStop(0, '#060810'); sky.addColorStop(0.6, '#0c1420'); sky.addColorStop(1, '#101828');
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
-    // Painter's order: back-to-front (lowest x+y first)
+    // Painter's sort for current rotation
     const order: [number,number][] = [];
-    for (let ty = 0; ty < H; ty++)
-      for (let tx = 0; tx < W; tx++)
-        order.push([tx, ty]);
-    order.sort(([ax,ay],[bx,by]) => {
-      const da = ax + ay, db = bx + by;
-      return da !== db ? da - db : ax - bx;
-    });
+    for (let ty=0;ty<H;ty++) for (let tx=0;tx<W;tx++) order.push([tx,ty]);
+    order.sort(([ax,ay],[bx,by]) => tileDepth(ax,ay,rotation,CX,CY)-tileDepth(bx,by,rotation,CX,CY));
 
-    // Ground floor: fill deep water below all tiles
-    ctx.fillStyle = '#0d2040';
-    ctx.fillRect(0, 0, mapW, mapH);
+    for (const [tx,ty] of order) {
+      const tt = tileTypeAt(tx,ty);
+      const n = getVScreen(tx,   ty);
+      const e = getVScreen(tx+1, ty);
+      const s = getVScreen(tx+1, ty+1);
+      const w = getVScreen(tx,   ty+1);
 
-    for (const [tx, ty] of order) {
-      const tt = tileTypeAt(tx, ty);
+      const avgE = (getVE(tx,ty)+getVE(tx+1,ty)+getVE(tx+1,ty+1)+getVE(tx,ty+1))/4;
+      const color = topColor(tx,ty,tt,avgE);
 
-      // 4 vertices of this tile in vertex-grid space
-      // N = (tx, ty), E = (tx+1, ty), S = (tx+1, ty+1), W = (tx, ty+1)
-      const vN = getScreen(tx,   ty);
-      const vE = getScreen(tx+1, ty);
-      const vS = getScreen(tx+1, ty+1);
-      const vW = getScreen(tx,   ty+1);
+      // Side faces — only draw where they'd be visible (south-facing edges of the terrain block)
+      const groundBase = 12; // constant "cliff height" for edge tiles
+      const eh = BASE_EH * zoom;
 
-      // Average elevation for color selection
-      const avgElev = (getVE(tx,ty)+getVE(tx+1,ty)+getVE(tx+1,ty+1)+getVE(tx,ty+1)) / 4;
-      const color   = tileTopColor(tx, ty, tt, avgElev);
-
-      // Side faces — south edge only (visible from viewer)
-      // South-west side: between vW and vS, going down to a fixed ground level
-      const groundY = OY + (tx + ty + 2) * (TH / 2) + 8; // approximate ground floor
-      const swColor = sideColor(avgElev, 'left');
-      const seColor = sideColor(avgElev, 'right');
-
-      if (vW.y < groundY || vS.y < groundY) {
-        const gW = { x: vW.x, y: Math.max(vW.y, groundY - 2) + 6 };
-        const gS = { x: vS.x, y: Math.max(vS.y, groundY - 2) + 6 };
-        drawSideFace(ctx, vW, vS, gW, gS, seColor);
-      }
-      // South-south face
+      // SW face (left)
       {
-        const gE = { x: vS.x, y: vS.y + EH * 1.2 + 4 };
-        const gN = { x: vE.x, y: vE.y + EH * 1.2 + 4 };
-        drawSideFace(ctx, vE, vS, gN, gE, swColor);
+        const bW = {x:w.x, y:w.y + eh*1.4 + groundBase};
+        const bS = {x:s.x, y:s.y + eh*1.4 + groundBase};
+        const gc = ctx.createLinearGradient(w.x,w.y,bW.x,bW.y);
+        gc.addColorStop(0,sideColor(avgE,'L')); gc.addColorStop(1,darken(sideColor(avgE,'L'),0.45));
+        ctx.fillStyle = gc;
+        ctx.beginPath(); ctx.moveTo(w.x,w.y); ctx.lineTo(s.x,s.y); ctx.lineTo(bS.x,bS.y); ctx.lineTo(bW.x,bW.y); ctx.closePath(); ctx.fill();
+      }
+      // SE face (right)
+      {
+        const bE = {x:e.x, y:e.y + eh*1.4 + groundBase};
+        const bS = {x:s.x, y:s.y + eh*1.4 + groundBase};
+        const gc = ctx.createLinearGradient(e.x,e.y,bE.x,bE.y);
+        gc.addColorStop(0,sideColor(avgE,'R')); gc.addColorStop(1,darken(sideColor(avgE,'R'),0.40));
+        ctx.fillStyle = gc;
+        ctx.beginPath(); ctx.moveTo(e.x,e.y); ctx.lineTo(s.x,s.y); ctx.lineTo(bS.x,bS.y); ctx.lineTo(bE.x,bE.y); ctx.closePath(); ctx.fill();
       }
 
-      // Top (surface) face
-      drawTopFace(ctx, vN, vE, vS, vW, color, tt);
+      // Top face — gradient simulating sunlight from NW
+      const topGrad = ctx.createLinearGradient(n.x,n.y,s.x,s.y);
+      topGrad.addColorStop(0, lighten(color,0.22));
+      topGrad.addColorStop(0.4, color);
+      topGrad.addColorStop(1, darken(color,0.20));
+      ctx.fillStyle = topGrad;
+      ctx.beginPath(); ctx.moveTo(n.x,n.y); ctx.lineTo(e.x,e.y); ctx.lineTo(s.x,s.y); ctx.lineTo(w.x,w.y); ctx.closePath(); ctx.fill();
 
-      // Subtle tile edge — very faint outline on top face only
-      ctx.beginPath();
-      ctx.moveTo(vN.x, vN.y);
-      ctx.lineTo(vE.x, vE.y);
-      ctx.lineTo(vS.x, vS.y);
-      ctx.lineTo(vW.x, vW.y);
-      ctx.closePath();
-      ctx.strokeStyle = 'rgba(0,0,0,0.09)';
-      ctx.lineWidth = 0.5;
-      ctx.stroke();
+      // Specular AO at tile edges
+      ctx.strokeStyle = 'rgba(0,0,0,0.12)'; ctx.lineWidth = 0.6;
+      ctx.beginPath(); ctx.moveTo(n.x,n.y); ctx.lineTo(e.x,e.y); ctx.lineTo(s.x,s.y); ctx.lineTo(w.x,w.y); ctx.closePath(); ctx.stroke();
 
-      // Terrain prop emoji on the surface
-      const props = TERRAIN_PROPS[tt] ?? [];
-      const propChar = props[(tx * 17 + ty * 23) % (props.length || 1)];
-      const cx = (vN.x + vE.x + vS.x + vW.x) / 4;
-      const cy = (vN.y + vE.y + vS.y + vW.y) / 4;
-      if (propChar) {
-        ctx.font = '13px serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.globalAlpha = 0.78;
-        ctx.fillText(propChar, cx, cy - 2);
-        ctx.globalAlpha = 1;
+      // Texture detail
+      if (zoom > 0.5) {
+        drawTexture(ctx, tt, n, e, s, w, color, frameRef.current);
       }
 
       // Resource icon
-      const tile = tileAt(tx, ty);
+      const tile = tiles.find(t=>Number(t.x)===tx&&Number(t.y)===ty);
       if (tile?.hasResource && tile.resourceType) {
-        ctx.font = '12px serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(RESOURCE_ICONS[tile.resourceType] ?? '✦', cx, cy - 16);
+        const cx = (n.x+e.x+s.x+w.x)/4, cy = (n.y+e.y+s.y+w.y)/4;
+        ctx.font = '12px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(RESOURCE_ICONS[tile.resourceType]??'✦', cx, cy-10);
+      }
+
+      // Snow detail on peaks
+      if (avgE >= 10) {
+        ctx.fillStyle = `rgba(240,248,255,${Math.min(1,(avgE-10)*0.25)})`;
+        ctx.beginPath(); ctx.moveTo(n.x,n.y); ctx.lineTo(e.x,e.y); ctx.lineTo(s.x,s.y); ctx.lineTo(w.x,w.y); ctx.closePath(); ctx.fill();
+        // Snow sparkle
+        const cx2=(n.x+s.x)/2, cy2=(n.y+s.y)/2;
+        ctx.fillStyle='rgba(255,255,255,0.7)';
+        ctx.beginPath(); ctx.arc(cx2,cy2,1.2,0,Math.PI*2); ctx.fill();
       }
     }
 
-    // ── Fighters ──────────────────────────────────────────────────────────────
-    for (const { tf, fighter } of roster) {
-      const fx = Number(tf.x), fy = Number(tf.y);
-      const { x: sx, y: sy } = getScreen(fx, fy);
-      const isDead     = !tf.isAlive;
-      const isSelected = selectedFighterId === Number(fighter.id);
-      const color      = isDead ? '#555' : (ARCHETYPE_COLORS[fighter.archetype] ?? '#d4af37');
-      const r          = 11;
-      const markerY    = sy - r - 4;
+    // ── Fighters ───────────────────────────────────────────────────────────────
+    const sortedFighters = [...roster].sort((a,b)=>{
+      const da=tileDepth(Number(a.tf.x),Number(a.tf.y),rotation,CX,CY);
+      const db=tileDepth(Number(b.tf.x),Number(b.tf.y),rotation,CX,CY);
+      return da-db;
+    });
 
-      // Shadow ellipse on terrain
-      ctx.beginPath();
-      ctx.ellipse(sx, sy + 2, r * 1.4, r * 0.45, 0, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(0,0,0,0.40)';
-      ctx.fill();
+    for (const {tf,fighter} of sortedFighters) {
+      const fx=Number(tf.x),fy=Number(tf.y);
+      const {x:sx,y:sy}=proj(fx,fy,getVE(fx,fy));
+      const isDead=!tf.isAlive, isSelected=selectedFighterId===Number(fighter.id);
+      const color=isDead?'#555':(ARCHETYPE_COLORS[fighter.archetype]??'#d4af37');
+      const r=11, markerY=sy-r-6;
 
-      // Vertical "stem" connecting dot to shadow
-      ctx.beginPath();
-      ctx.moveTo(sx, sy + 2);
-      ctx.lineTo(sx, markerY + r);
-      ctx.strokeStyle = 'rgba(0,0,0,0.30)';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
+      // Shadow on terrain
+      ctx.beginPath(); ctx.ellipse(sx,sy+1,r*1.5,r*0.42,0,0,Math.PI*2);
+      ctx.fillStyle='rgba(0,0,0,0.38)'; ctx.fill();
+      // Stem
+      ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(sx,markerY+r);
+      ctx.strokeStyle='rgba(0,0,0,0.28)'; ctx.lineWidth=1.5; ctx.stroke();
 
-      // Outer ring glow for selection
       if (isSelected) {
-        ctx.beginPath();
-        ctx.arc(sx, markerY, r + 7, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(212,175,55,0.45)';
-        ctx.lineWidth = 3;
-        ctx.stroke();
+        ctx.beginPath(); ctx.arc(sx,markerY,r+8,0,Math.PI*2);
+        ctx.strokeStyle='rgba(212,175,55,0.5)'; ctx.lineWidth=2.5; ctx.stroke();
       }
-
-      // Marker circle
-      const grad = ctx.createRadialGradient(sx - r * 0.3, markerY - r * 0.3, 1, sx, markerY, r);
-      grad.addColorStop(0, lighten(color, 0.4));
-      grad.addColorStop(1, darken(color, 0.25));
-      ctx.beginPath();
-      ctx.arc(sx, markerY, r, 0, Math.PI * 2);
-      ctx.fillStyle = grad;
-      ctx.fill();
-      ctx.strokeStyle = isSelected ? '#d4af37' : 'rgba(0,0,0,0.5)';
-      ctx.lineWidth = isSelected ? 2.5 : 1;
-      ctx.stroke();
+      const grad=ctx.createRadialGradient(sx-r*0.35,markerY-r*0.35,1,sx,markerY,r);
+      grad.addColorStop(0,lighten(color,0.45)); grad.addColorStop(1,darken(color,0.30));
+      ctx.beginPath(); ctx.arc(sx,markerY,r,0,Math.PI*2);
+      ctx.fillStyle=grad; ctx.fill();
+      ctx.strokeStyle=isSelected?'#d4af37':'rgba(0,0,0,0.5)';
+      ctx.lineWidth=isSelected?2.5:1; ctx.stroke();
 
       if (isDead) {
-        ctx.font = 'bold 10px serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = '#fff';
-        ctx.fillText('☠', sx, markerY);
+        ctx.font='bold 10px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillStyle='#fff'; ctx.fillText('☠',sx,markerY);
       }
 
-      // Name tag above marker
-      const name = fighter.name?.split(' ')[0] ?? '?';
-      ctx.font = '8px monospace';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'bottom';
-      const tw = ctx.measureText(name).width + 8;
-      const tagY = markerY - r - 4;
-      ctx.fillStyle = 'rgba(0,0,0,0.60)';
-      ctx.fillRect(sx - tw/2, tagY - 11, tw, 11);
-      ctx.fillStyle = isDead ? 'rgba(255,255,255,0.45)' : (isSelected ? '#d4af37' : '#f0f0f0');
-      ctx.fillText(name, sx, tagY);
+      // Name tag
+      const name=fighter.name?.split(' ')[0]??'?';
+      ctx.font=`bold 8.5px monospace`; ctx.textAlign='center'; ctx.textBaseline='bottom';
+      const tagW=ctx.measureText(name).width+8;
+      const tagY=markerY-r-4;
+      ctx.fillStyle='rgba(0,0,0,0.65)'; ctx.fillRect(sx-tagW/2,tagY-12,tagW,12);
+      ctx.fillStyle=isSelected?'#d4af37':'rgba(255,255,255,0.92)';
+      ctx.fillText(name,sx,tagY-1);
     }
+  }, [tiles, roster, selectedFighterId, W, H, rotation, zoom, tileTypeAt, getVE, getVScreen, proj, CX, CY, CANVAS_W, CANVAS_H, OX, OY]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tiles, roster, selectedFighterId, W, H, mapW, mapH, OX, OY]);
-
-  // ── Burst animation ──────────────────────────────────────────────────────────
+  // Water animation loop
   useEffect(() => {
-    const located = events.filter(e => e.x != null && e.y != null);
-    if (!located.length) return;
-    const ev = located[0];
-    const { x: sx, y: sy } = getScreen(Number(ev.x!), Number(ev.y!));
-    setBurst({ id: ev.id, icon: EVENT_BURST_ICONS[ev.eventType] ?? '✦', sx, sy });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [events]);
+    let running = true;
+    const loop = () => {
+      if (!running) return;
+      frameRef.current += 1;
+      // Only re-draw canvas on animation tick when WATER tiles exist and zoom is large enough
+      const hasWater = tiles.some(t => t.tileType === 'WATER');
+      if (hasWater && zoom > 0.5) draw();
+      rafRef.current = requestAnimationFrame(loop);
+    };
+    rafRef.current = requestAnimationFrame(loop);
+    return () => { running = false; cancelAnimationFrame(rafRef.current); };
+  }, [draw, tiles, zoom]);
 
-  // ── Mouse interaction ────────────────────────────────────────────────────────
+  // Redraw on rotation/zoom/tile/roster change
+  useEffect(() => { draw(); }, [draw]);
+
+  // ── Burst detection ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    const located = events.filter(e=>e.x!=null&&e.y!=null);
+    if (!located.length) return;
+    const ev=located[0];
+    const {x:sx,y:sy}=proj(Number(ev.x!),Number(ev.y!),getVE(Number(ev.x!),Number(ev.y!)));
+    setBurst({id:ev.id,icon:EVENT_BURST_ICONS[ev.eventType]??'✦',sx,sy});
+  }, [events, proj, getVE]);
+
+  // ── Mouse / wheel handlers ──────────────────────────────────────────────────
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    isDragging.current = true;
+    lastMouseX.current = e.clientX;
+    lastMouseY.current = e.clientY;
+  };
+  const handleMouseUp = () => { isDragging.current = false; };
+
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (isDragging.current) {
+      const dx = e.clientX - lastMouseX.current;
+      const dy = e.clientY - lastMouseY.current;
+      lastMouseX.current = e.clientX;
+      lastMouseY.current = e.clientY;
+      setRotation(r => r + dx * 0.013);
+      setZoom(z => Math.max(0.35, Math.min(3.0, z - dy * 0.008)));
+      return;
+    }
+    // Hover detection for fighter tooltip
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-    let best: typeof hoveredFighter = null, bestD = 18;
-    for (const { tf, fighter } of roster) {
+    const mx = e.clientX-rect.left, my = e.clientY-rect.top;
+    let best: typeof hoveredFighter=null, bestD=20;
+    for (const {tf,fighter} of roster) {
       if (!tf.isAlive) continue;
-      const { x: sx, y: sy } = getScreen(Number(tf.x), Number(tf.y));
-      const markerY = sy - 11 - 4;
-      const d = Math.hypot(mx - sx, my - markerY);
-      if (d < bestD) { bestD = d; best = { fighter, tf, sx, sy: markerY }; }
+      const {x:sx,y:sy}=proj(Number(tf.x),Number(tf.y),getVE(Number(tf.x),Number(tf.y)));
+      const markerY=sy-11-6;
+      const d=Math.hypot(mx-sx,my-markerY);
+      if (d<bestD){bestD=d;best={fighter,tf,sx,sy:markerY};}
     }
     setHoveredFighter(best);
-  }, [roster, getScreen]);
+  }, [roster, proj, getVE]);
 
-  const alive = roster.filter(r => r.tf.isAlive);
-  const tickerEvents = events.slice(0, 7);
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    setZoom(z => Math.max(0.35, Math.min(3.0, z - e.deltaY * 0.0012)));
+  }, []);
+
+  const handleClick = useCallback(() => {
+    if (hoveredFighter) onSelectFighter?.(Number(hoveredFighter.fighter.id));
+  }, [hoveredFighter, onSelectFighter]);
+
+  const alive = roster.filter(r=>r.tf.isAlive);
+  const ticker = events.slice(0,7);
 
   return (
-    <div className="bg-[#060a12] border border-accent-crimson-end relative overflow-hidden">
+    <div className="bg-[#060a12] border border-accent-crimson-end relative overflow-hidden select-none">
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-separator/30">
         <div className="flex items-center gap-3">
           <h3 className="font-heading text-sm text-accent-gold uppercase tracking-wider">Live Arena</h3>
-          <div className="flex items-center gap-1.5 bg-destructive/20 border border-destructive px-2 py-0.5">
+          <span className="flex items-center gap-1.5 bg-destructive/20 border border-destructive px-2 py-0.5">
             <span className="w-1.5 h-1.5 rounded-full bg-destructive animate-pulse" />
             <span className="font-mono text-[9px] tracking-widest text-destructive uppercase">On Air</span>
-          </div>
-          {currentHour !== undefined && (
-            <span className="font-mono text-[10px] text-text-secondary">Hour {currentHour}</span>
-          )}
+          </span>
+          {currentHour !== undefined && <span className="font-mono text-[10px] text-text-secondary">Hour {currentHour}</span>}
         </div>
-        <span className="font-mono text-[10px] text-text-secondary">{alive.length} fighters alive · hover for stats</span>
+        <div className="flex items-center gap-4">
+          <span className="font-mono text-[10px] text-text-secondary hidden sm:block">drag to rotate · scroll to zoom</span>
+          <span className="font-mono text-[10px] text-text-secondary">{alive.length} alive</span>
+        </div>
       </div>
 
       {/* Live ticker */}
-      {tickerEvents.length > 0 && (
+      {ticker.length > 0 && (
         <div className="overflow-hidden bg-black/40 border-b border-separator/20">
           <motion.div
-            key={tickerEvents[0]?.id}
+            key={ticker[0]?.id}
             className="inline-flex gap-14 py-1.5 px-4 font-mono text-[10px] text-text-secondary whitespace-nowrap"
-            initial={{ x: '100%' }}
-            animate={{ x: '-100%' }}
+            initial={{ x: '100%' }} animate={{ x: '-100%' }}
             transition={{ duration: 32, ease: 'linear', repeat: Infinity }}
           >
-            {tickerEvents.map(ev => (
+            {ticker.map(ev=>(
               <span key={ev.id}>
                 <span className="text-accent-gold">[H{ev.hour}]</span>{' '}
-                <span>{EVENT_BURST_ICONS[ev.eventType] ?? '•'}</span>{' '}
+                <span>{EVENT_BURST_ICONS[ev.eventType]??'•'}</span>{' '}
                 <span className="text-text-primary">{ev.description}</span>
               </span>
             ))}
@@ -554,76 +581,71 @@ export function ArenaMap({
         </div>
       )}
 
-      {/* Canvas + overlays */}
-      <div className="overflow-auto relative" style={{ maxHeight: 540 }}>
-        <div className="relative inline-block" style={{ minWidth: mapW }}>
-          <canvas
-            ref={canvasRef}
-            style={{ display: 'block', cursor: hoveredFighter ? 'pointer' : 'default' }}
-            onMouseMove={handleMouseMove}
-            onMouseLeave={() => setHoveredFighter(null)}
-            onClick={() => hoveredFighter && onSelectFighter?.(Number(hoveredFighter.fighter.id))}
-          />
+      {/* Canvas */}
+      <div className="relative overflow-hidden" style={{ height: CANVAS_H }}>
+        <canvas
+          ref={canvasRef}
+          style={{ display: 'block', cursor: isDragging.current ? 'grabbing' : hoveredFighter ? 'pointer' : 'grab', touchAction: 'none' }}
+          onMouseDown={handleMouseDown}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={() => { isDragging.current=false; setHoveredFighter(null); }}
+          onMouseMove={handleMouseMove}
+          onWheel={handleWheel}
+          onClick={handleClick}
+        />
 
-          {/* Fighter tooltip */}
-          <AnimatePresence>
-            {hoveredFighter && (
-              <motion.div
-                key={Number(hoveredFighter.fighter.id)}
-                initial={{ opacity: 0, scale: 0.95, y: 4 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                transition={{ duration: 0.1 }}
-                className="absolute pointer-events-none bg-bg-primary/96 border border-accent-gold shadow-2xl p-3 w-48 font-mono text-xs z-50"
-                style={{ left: hoveredFighter.sx + 16, top: hoveredFighter.sy - 50 }}
-              >
-                <div className="font-display text-sm text-accent-gold mb-0.5">{hoveredFighter.fighter.name}</div>
-                <div className="text-text-secondary text-[9px] uppercase mb-2">{hoveredFighter.fighter.archetype}</div>
-                {[
-                  ['Position', `(${Number(hoveredFighter.tf.x)}, ${Number(hoveredFighter.tf.y)})`],
-                  ['Status', hoveredFighter.tf.condition],
-                  ['Hunger', Number(hoveredFighter.tf.hunger)],
-                  ['Thirst', Number(hoveredFighter.tf.thirst)],
-                  ['Fatigue', Number(hoveredFighter.tf.fatigue)],
-                  ['Injury', `${Number(hoveredFighter.tf.injury)}%`],
-                  ['Kills', Number(hoveredFighter.tf.kills ?? 0)],
-                ].map(([label, val]) => (
-                  <div key={String(label)} className="flex justify-between text-[10px]">
-                    <span className="text-text-secondary">{label}</span>
-                    <span className={String(label) === 'Injury' && Number(hoveredFighter.tf.injury) > 60 ? 'text-red-400' : 'text-text-primary'}>
-                      {String(val)}
-                    </span>
-                  </div>
-                ))}
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Event burst */}
-          <AnimatePresence>
-            {burst && (
-              <motion.div
-                key={burst.id}
-                className="absolute pointer-events-none text-3xl z-60"
-                style={{ left: burst.sx - 20, top: burst.sy - 50 }}
-                initial={{ scale: 0, opacity: 0, y: 0 }}
-                animate={{ scale: [0, 1.8, 1.3], opacity: [0, 1, 0], y: -30 }}
-                transition={{ duration: 2.8, ease: 'easeOut' }}
-                onAnimationComplete={() => setBurst(null)}
-              >
-                <span style={{ filter: 'drop-shadow(0 0 8px rgba(212,175,55,0.9))' }}>{burst.icon}</span>
-              </motion.div>
-            )}
-          </AnimatePresence>
+        {/* Controls hint overlay */}
+        <div className="absolute bottom-3 right-4 flex gap-3 font-mono text-[9px] text-text-secondary/50 pointer-events-none">
+          <span>🖱️ drag: rotate + zoom</span>
+          <span>⚙️ scroll: zoom</span>
         </div>
+
+        {/* Fighter tooltip */}
+        <AnimatePresence>
+          {hoveredFighter && (
+            <motion.div
+              key={Number(hoveredFighter.fighter.id)}
+              initial={{opacity:0,scale:0.95,y:4}} animate={{opacity:1,scale:1,y:0}} exit={{opacity:0}}
+              transition={{duration:0.1}}
+              className="absolute pointer-events-none bg-bg-primary/96 border border-accent-gold shadow-2xl p-3 w-48 font-mono text-xs z-50"
+              style={{left:Math.min(hoveredFighter.sx+14,CANVAS_W-200), top:Math.max(4,hoveredFighter.sy-60)}}
+            >
+              <div className="font-display text-sm text-accent-gold mb-0.5">{hoveredFighter.fighter.name}</div>
+              <div className="text-[9px] uppercase text-text-secondary mb-2">{hoveredFighter.fighter.archetype}</div>
+              {(([['Status',hoveredFighter.tf.condition],['Position',`(${Number(hoveredFighter.tf.x)},${Number(hoveredFighter.tf.y)})`],
+                 ['Hunger',Number(hoveredFighter.tf.hunger)],['Thirst',Number(hoveredFighter.tf.thirst)],
+                 ['Injury',`${Number(hoveredFighter.tf.injury)}%`],['Kills',Number(hoveredFighter.tf.kills??0)]]
+                ) as [string,any][]).map(([l,v])=>(
+                <div key={l} className="flex justify-between text-[10px]">
+                  <span className="text-text-secondary">{l}</span>
+                  <span className={l==='Injury'&&Number(hoveredFighter.tf.injury)>60?'text-red-400':'text-text-primary'}>{v}</span>
+                </div>
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Event burst */}
+        <AnimatePresence>
+          {burst && (
+            <motion.div
+              key={burst.id}
+              className="absolute pointer-events-none text-3xl z-60"
+              style={{left:Math.min(burst.sx-20,CANVAS_W-60),top:Math.max(0,burst.sy-50)}}
+              initial={{scale:0,opacity:0,y:0}} animate={{scale:[0,2,1.4],opacity:[0,1,0],y:-35}}
+              transition={{duration:2.8,ease:'easeOut'}} onAnimationComplete={()=>setBurst(null)}
+            >
+              <span style={{filter:'drop-shadow(0 0 8px rgba(212,175,55,0.9))'}}>{burst.icon}</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
-      {/* Archetype legend */}
+      {/* Legend */}
       <div className="px-5 py-2.5 border-t border-separator/20 flex flex-wrap gap-x-5 gap-y-1">
-        {Object.entries(ARCHETYPE_COLORS).map(([arch, color]) => (
+        {Object.entries(ARCHETYPE_COLORS).map(([arch,color])=>(
           <div key={arch} className="flex items-center gap-1.5 font-mono text-[9px] text-text-secondary uppercase">
-            <span className="w-2 h-2 rounded-full" style={{ background: color }} />
-            {arch}
+            <span className="w-2 h-2 rounded-full" style={{background:color}}/>{arch}
           </div>
         ))}
       </div>
