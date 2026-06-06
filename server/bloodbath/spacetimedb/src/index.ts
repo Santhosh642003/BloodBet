@@ -389,6 +389,7 @@ export const verifyLogin = spacetimedb.reducer(
       tournamentsHosted: user.tournamentsHosted,
       fightersOwned: user.fightersOwned,
       createdAt: user.createdAt,
+      bio: user.bio, avatarEmoji: user.avatarEmoji, favoriteArchetype: user.favoriteArchetype,
     });
   }
 );
