@@ -336,18 +336,24 @@ export const verifyLogin = spacetimedb.reducer(
     );
     if (!user) throw new Error('Account not found');
     if (user.passwordHash !== passwordHash) throw new Error('Incorrect password');
-    const current = ctx.db.user.identity.find(ctx.sender);
-    if (!current) {
-      ctx.db.user.insert({
-        identity: ctx.sender,
-        username: user.username, email: user.email,
-        passwordHash: user.passwordHash,
-        balance: user.balance,
-        tournamentsHosted: user.tournamentsHosted,
-        fightersOwned: user.fightersOwned,
-        createdAt: ctx.timestamp,
-      });
-    }
+
+    // Already logged in with this identity — nothing to do
+    if (user.identity.toHexString() === ctx.sender.toHexString()) return;
+
+    // Migrate the account to this identity (logging in elsewhere moves the
+    // account, rather than creating a diverging duplicate with its own balance)
+    ctx.db.user.identity.delete(user.identity);
+    const existingForSender = ctx.db.user.identity.find(ctx.sender);
+    if (existingForSender) ctx.db.user.identity.delete(ctx.sender);
+    ctx.db.user.insert({
+      identity: ctx.sender,
+      username: user.username, email: user.email,
+      passwordHash: user.passwordHash,
+      balance: user.balance,
+      tournamentsHosted: user.tournamentsHosted,
+      fightersOwned: user.fightersOwned,
+      createdAt: user.createdAt,
+    });
   }
 );
 
