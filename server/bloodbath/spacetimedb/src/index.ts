@@ -631,7 +631,6 @@ export const advanceHour = spacetimedb.reducer(
   { name: 'advanceHour' },
   { tournamentId: t.u32(), decisions: t.string() },
   (ctx, { tournamentId, decisions }) => {
-    requireAdmin(ctx);
     const tournament = [...ctx.db.tournament.iter()]
       .find((t: any) => Number(t.id) === Number(tournamentId));
     if (!tournament || tournament.status !== 'LIVE') return;
