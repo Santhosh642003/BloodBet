@@ -13,11 +13,16 @@ export function DashboardPage() {
     bets, identity,
   } = useDB();
 
-  // Redirect to login if not connected or not registered
+  // Redirect to login if not connected or not registered.
+  // Give the user-row subscription a moment to arrive after a fresh
+  // register/login — otherwise we bounce straight back to /login before
+  // `currentUser` has a chance to populate.
   useEffect(() => {
-    if (connected && !currentUser && identity) {
+    if (!(connected && !currentUser && identity)) return;
+    const t = setTimeout(() => {
       navigate('/login');
-    }
+    }, 2500);
+    return () => clearTimeout(t);
   }, [connected, currentUser, identity, navigate]);
 
   const balance      = currentUser?.balance ?? 0;

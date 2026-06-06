@@ -129,7 +129,7 @@ export function LeaderboardPage() {
         </div>
 
         {/* Top 3 Podium */}
-        {activeTab === 'masters' && (
+        {activeTab === 'masters' && gameMasters.length >= 3 && (
           <>
             <div className="grid grid-cols-3 gap-6 mb-12 max-w-5xl mx-auto">
               {/* Rank 2 */}

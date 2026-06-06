@@ -8,6 +8,10 @@ import { ContractsPage } from './pages/ContractsPage';
 import { BuildFighterPage } from './pages/BuildFighterPage';
 import { HostTournamentPage } from './pages/HostTournamentPage';
 import { LeaderboardPage } from './pages/LeaderboardPage';
+import { ProfilePage } from './pages/ProfilePage';
+import { PlayersPage } from './pages/PlayersPage';
+import { TournamentHistoryPage } from './pages/TournamentHistoryPage';
+import { TournamentSummaryPage } from './pages/TournamentSummaryPage';
 
 export default function App() {
   return (
@@ -22,6 +26,10 @@ export default function App() {
         <Route path="/build-fighter" element={<BuildFighterPage />} />
         <Route path="/host-tournament" element={<HostTournamentPage />} />
         <Route path="/leaderboard" element={<LeaderboardPage />} />
+        <Route path="/profile" element={<ProfilePage />} />
+        <Route path="/players" element={<PlayersPage />} />
+        <Route path="/tournament-history" element={<TournamentHistoryPage />} />
+        <Route path="/tournament-summary/:id" element={<TournamentSummaryPage />} />
       </Routes>
     </BrowserRouter>
   );

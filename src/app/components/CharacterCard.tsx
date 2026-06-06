@@ -13,6 +13,8 @@ interface CharacterCardProps {
   survivalOdds: number;
   winOdds: string;
   avatar?: string;
+  dead?: boolean;
+  conditionLabel?: string;
   onClick?: () => void;
 }
 
@@ -23,29 +25,54 @@ export function CharacterCard({
   survivalOdds,
   winOdds,
   avatar,
+  dead = false,
+  conditionLabel,
   onClick
 }: CharacterCardProps) {
   return (
     <motion.div
-      whileHover={{ y: -8 }}
+      whileHover={dead ? undefined : { y: -8 }}
       onClick={onClick}
-      className="bg-bg-secondary border border-separator inner-glow p-6 cursor-pointer group transition-all hover:border-accent-gold"
+      className={`bg-bg-secondary border inner-glow p-6 group transition-all ${
+        dead
+          ? 'border-separator opacity-50 grayscale cursor-default'
+          : 'border-separator cursor-pointer hover:border-accent-gold'
+      }`}
     >
       {/* Avatar placeholder */}
-      <div className="w-full aspect-square bg-bg-tertiary mb-4 flex items-center justify-center">
+      <div className="relative w-full aspect-square bg-bg-tertiary mb-4 flex items-center justify-center">
         {avatar ? (
           <img src={avatar} alt={name} className="w-full h-full object-cover" />
         ) : (
           <div className="text-6xl text-accent-gold opacity-20">⚔️</div>
         )}
+        {dead && (
+          <div className="absolute inset-0 flex items-center justify-center bg-bg-primary/60">
+            <span className="font-display text-xl text-red-400 tracking-widest uppercase">Eliminated</span>
+          </div>
+        )}
       </div>
 
       {/* Name */}
-      <h3 className="font-display text-xl text-accent-gold mb-2">{name}</h3>
+      <h3 className={`font-display text-xl mb-2 ${dead ? 'text-text-secondary line-through' : 'text-accent-gold'}`}>
+        {name}
+      </h3>
 
       {/* Archetype */}
-      <div className="font-heading text-text-secondary text-xs uppercase tracking-wider mb-4">
-        {archetype}
+      <div className="flex items-center justify-between mb-4">
+        <div className="font-heading text-text-secondary text-xs uppercase tracking-wider">
+          {archetype}
+        </div>
+        {conditionLabel && (
+          <div className={`font-mono text-xs uppercase px-2 py-0.5 border ${
+            dead ? 'border-separator text-text-secondary' :
+            ['CRITICAL', 'INJURED', 'HUNTED'].includes(conditionLabel) ? 'border-red-500 text-red-400' :
+            ['HUNGRY', 'THIRSTY', 'TIRED', 'EXPOSED'].includes(conditionLabel) ? 'border-yellow-500 text-yellow-400' :
+            'border-success-green text-success-green'
+          }`}>
+            {conditionLabel}
+          </div>
+        )}
       </div>
 
       {/* Stats */}

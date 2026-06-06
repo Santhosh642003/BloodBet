@@ -1,5 +1,6 @@
 import { ButtonHTMLAttributes, forwardRef } from 'react';
 import { clsx } from 'clsx';
+import { useSound } from '../context/SoundContext';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: 'primary' | 'secondary' | 'danger';
@@ -7,7 +8,8 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ variant = 'primary', className, children, ...props }, ref) => {
+  ({ variant = 'primary', className, children, onClick, onMouseEnter, ...props }, ref) => {
+    const { play } = useSound();
     return (
       <button
         ref={ref}
@@ -20,6 +22,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
           },
           className
         )}
+        onMouseEnter={(e) => { play('hover'); onMouseEnter?.(e); }}
+        onClick={(e) => { play(variant === 'danger' ? 'error' : 'click'); onClick?.(e); }}
         {...props}
       >
         {children}

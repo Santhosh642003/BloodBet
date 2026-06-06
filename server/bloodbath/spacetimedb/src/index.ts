@@ -1,4 +1,4 @@
-import { schema, table, t } from 'spacetimedb/server';
+import { schema, table, t, SenderError } from 'spacetimedb/server';
 
 // ─── TABLES ───────────────────────────────────────────────────────────────────
 
@@ -13,6 +13,24 @@ const user = table(
     tournamentsHosted: t.u32(),
     fightersOwned:     t.u32(),
     createdAt:         t.timestamp(),
+    bio:               t.string(),
+    avatarEmoji:       t.string(),
+    favoriteArchetype: t.string(),
+  }
+);
+
+const friendship = table(
+  {
+    name: 'friendship',
+    public: true,
+    indexes: [{ accessor: 'by_pair', algorithm: 'btree', columns: ['requesterId', 'addresseeId'] }],
+  },
+  {
+    id:           t.u32().primaryKey().autoInc(),
+    requesterId:  t.identity().index('btree'),
+    addresseeId:  t.identity().index('btree'),
+    status:       t.string(), // PENDING | ACCEPTED
+    createdAt:    t.timestamp(),
   }
 );
 
@@ -156,12 +174,30 @@ const auctionBid = table(
   }
 );
 
+const notification = table(
+  {
+    name: 'notification',
+    public: true,
+    indexes: [{ accessor: 'by_recipient', algorithm: 'btree', columns: ['recipientId', 'createdAt'] }],
+  },
+  {
+    id:          t.u32().primaryKey().autoInc(),
+    recipientId: t.identity().index('btree'),
+    kind:        t.string(), // TOURNAMENT | FRIEND_REQUEST | FRIEND_ACCEPTED
+    title:       t.string(),
+    body:        t.string(),
+    relatedId:   t.option(t.u32()),
+    read:        t.bool(),
+    createdAt:   t.timestamp(),
+  }
+);
+
 // ─── SCHEMA ───────────────────────────────────────────────────────────────────
 
 const spacetimedb = schema({
   user, fighterTemplate, tournament, arenaTile,
   tournamentFighter, bet, sponsorDrop, liveEvent,
-  contract, auctionBid,
+  contract, auctionBid, friendship, notification,
 });
 
 export default spacetimedb;
@@ -218,12 +254,29 @@ function settleBets(ctx: any, tournamentId: number, winnerId: number) {
   if (winner) ctx.db.fighterTemplate.id.update({ ...winner, wins: winner.wins + 1 });
 }
 
+// A tournament spans 5 in-game days (24 hours each) at most.
+const MAX_TOURNAMENT_HOURS = 5 * 24;
+
+function pickWinner(survivors: any[]): any {
+  if (survivors.length <= 1) return survivors[0];
+  return [...survivors].sort((a: any, b: any) => {
+    if (Number(b.kills) !== Number(a.kills)) return Number(b.kills) - Number(a.kills);
+    return Number(a.injury) - Number(b.injury);
+  })[0];
+}
+
 function endTournament(ctx: any, tournament: any, survivors: any[], hour: number) {
-  const winnerId = survivors[0]?.fighterId ?? 0;
-  const winner   = [...ctx.db.fighterTemplate.iter()].find((f: any) => Number(f.id) === Number(winnerId));
+  const winnerEntry = pickWinner(survivors);
+  const winnerId    = winnerEntry?.fighterId ?? 0;
+  const winner      = [...ctx.db.fighterTemplate.iter()].find((f: any) => Number(f.id) === Number(winnerId));
+  const reason      = survivors.length === 1
+    ? `${winner?.name ?? 'The last fighter'} is the last one standing!`
+    : winner
+      ? `Time's up! ${winner.name} wins by survival of the fittest (${Number(winnerEntry.kills)} kills, least injured).`
+      : 'No survivors.';
   ctx.db.liveEvent.insert({
     id: 0, tournamentId: tournament.id, hour, eventType: 'PHASE',
-    description: winner ? `${winner.name} is the last fighter standing!` : 'No survivors.',
+    description: reason,
     involvedIds: JSON.stringify(winnerId ? [winnerId] : []),
     x: undefined, y: undefined, timestamp: ctx.timestamp,
   });
@@ -306,9 +359,9 @@ export const registerUser = spacetimedb.reducer(
   (ctx, { username, email, passwordHash }) => {
     // Only check username/email uniqueness — not identity
     const takenUser  = [...ctx.db.user.iter()].find((u: any) => u.username === username);
-    if (takenUser) throw new Error('Username already taken');
+    if (takenUser) throw new SenderError('Username already taken');
     const takenEmail = [...ctx.db.user.iter()].find((u: any) => u.email === email);
-    if (takenEmail) throw new Error('Email already registered');
+    if (takenEmail) throw new SenderError('Email already registered');
 
     // If this identity already has an account, update it instead
     const existing = ctx.db.user.identity.find(ctx.sender);
@@ -322,6 +375,7 @@ export const registerUser = spacetimedb.reducer(
         identity: ctx.sender, username, email, passwordHash,
         balance: 100.0, tournamentsHosted: 0, fightersOwned: 0,
         createdAt: ctx.timestamp,
+        bio: '', avatarEmoji: '🗡️', favoriteArchetype: 'STRATEGIC',
       });
     }
   }
@@ -334,65 +388,161 @@ export const verifyLogin = spacetimedb.reducer(
     const user = [...ctx.db.user.iter()].find((u: any) =>
       u.username === usernameOrEmail || u.email === usernameOrEmail
     );
-    if (!user) throw new Error('Account not found');
-    if (user.passwordHash !== passwordHash) throw new Error('Incorrect password');
-    const current = ctx.db.user.identity.find(ctx.sender);
-    if (!current) {
-      ctx.db.user.insert({
-        identity: ctx.sender,
-        username: user.username, email: user.email,
-        passwordHash: user.passwordHash,
-        balance: user.balance,
-        tournamentsHosted: user.tournamentsHosted,
-        fightersOwned: user.fightersOwned,
-        createdAt: ctx.timestamp,
-      });
-    }
+    if (!user) throw new SenderError('Account not found');
+    if (user.passwordHash !== passwordHash) throw new SenderError('Incorrect password');
+
+    // Already logged in with this identity — nothing to do
+    if (user.identity.toHexString() === ctx.sender.toHexString()) return;
+
+    // Migrate the account to this identity (logging in elsewhere moves the
+    // account, rather than creating a diverging duplicate with its own balance)
+    ctx.db.user.identity.delete(user.identity);
+    const existingForSender = ctx.db.user.identity.find(ctx.sender);
+    if (existingForSender) ctx.db.user.identity.delete(ctx.sender);
+    ctx.db.user.insert({
+      identity: ctx.sender,
+      username: user.username, email: user.email,
+      passwordHash: user.passwordHash,
+      balance: user.balance,
+      tournamentsHosted: user.tournamentsHosted,
+      fightersOwned: user.fightersOwned,
+      createdAt: user.createdAt,
+      bio: user.bio, avatarEmoji: user.avatarEmoji, favoriteArchetype: user.favoriteArchetype,
+    });
   }
 );
+
+function notifyAllUsers(ctx: any, kind: string, title: string, body: string, relatedId?: number, exceptIdentity?: any) {
+  for (const u of [...ctx.db.user.iter()]) {
+    if (exceptIdentity && u.identity.toHexString() === exceptIdentity.toHexString()) continue;
+    ctx.db.notification.insert({
+      id: 0, recipientId: u.identity, kind, title, body,
+      relatedId, read: false, createdAt: ctx.timestamp,
+    });
+  }
+}
 
 export const createTournament = spacetimedb.reducer(
   { name: 'createTournament' },
   { name: t.string(), arenaType: t.string() },
   (ctx, { name, arenaType }) => {
-    ctx.db.tournament.insert({
+    const tournamentId = ctx.db.tournament.insert({
       id: 0, name, arenaType, status: 'UPCOMING', currentHour: 0,
       gridWidth: 12, gridHeight: 12, prizePool: 0,
       hostIdentity: ctx.sender, createdAt: ctx.timestamp,
-    });
+    }).id;
+    notifyAllUsers(ctx, 'TOURNAMENT', 'New Tournament Announced',
+      `"${name}" is opening in the ${arenaType}. Place your bets!`, tournamentId, ctx.sender);
   }
 );
+
+// Per-biome tile weightings — each arena type favors different terrain so
+// every tournament's map actually feels like its named environment.
+const BIOME_WEIGHTS: Record<string, Record<string, number>> = {
+  arctic:  { PLAIN: 5, WATER: 4, RUINS: 2, SHELTER: 2, DANGER: 2, FOREST: 1 },
+  jungle:  { FOREST: 6, PLAIN: 2, WATER: 2, RUINS: 2, SHELTER: 1, DANGER: 2 },
+  volcano: { DANGER: 5, RUINS: 4, PLAIN: 2, SHELTER: 1, FOREST: 1, WATER: 1 },
+  urban:   { RUINS: 5, PLAIN: 4, SHELTER: 3, DANGER: 2, FOREST: 1, WATER: 1 },
+  ocean:   { WATER: 6, PLAIN: 2, SHELTER: 1, RUINS: 1, DANGER: 1, FOREST: 1 },
+  desert:  { PLAIN: 5, RUINS: 3, DANGER: 3, SHELTER: 1, WATER: 1, FOREST: 1 },
+};
+const DEFAULT_BIOME_WEIGHTS = { PLAIN: 4, FOREST: 2, WATER: 2, RUINS: 2, SHELTER: 1, DANGER: 2 };
+
+function weightedPick(ctx: any, weights: Record<string, number>): string {
+  const entries = Object.entries(weights);
+  const total = entries.reduce((s, [, w]) => s + w, 0);
+  let roll = ctx.random() * total;
+  for (const [type, w] of entries) {
+    if (roll < w) return type;
+    roll -= w;
+  }
+  return entries[0][0];
+}
 
 export const startTournament = spacetimedb.reducer(
   { name: 'startTournament' },
   {},
   (ctx, _args) => {
     const tournament = [...ctx.db.tournament.iter()].find((t: any) => t.status === 'UPCOMING');
-    if (!tournament) throw new Error('No upcoming tournament');
-    const W = Number(tournament.gridWidth);
-    const H = Number(tournament.gridHeight);
-    const terrainTypes = ['PLAIN','PLAIN','PLAIN','FOREST','FOREST','WATER','RUINS','SHELTER','DANGER'];
+    if (!tournament) throw new SenderError('No upcoming tournament');
+
+    // Every arena is freshly generated: size, danger level, and biome mix
+    // all vary so no two tournaments play out on the same map.
+    const W = ctx.random.integerInRange(10, 20);
+    const H = ctx.random.integerInRange(10, 20);
+    const stakeRoll  = ctx.random();                       // 0..1 — drives "higher stakes" arenas
+    const dangerBoost = 1 + stakeRoll * 1.8;               // bigger/riskier arenas skew deadlier
+    const prizePool   = Math.round((W * H) * (8 + stakeRoll * 22));
+
+    const baseWeights = BIOME_WEIGHTS[tournament.arenaType] ?? DEFAULT_BIOME_WEIGHTS;
+    const weights: Record<string, number> = { ...baseWeights, DANGER: (baseWeights.DANGER ?? 1) * dangerBoost };
+
+    const cx0 = Math.floor(W * (0.35 + ctx.random() * 0.1));
+    const cx1 = Math.ceil(W * (0.55 + ctx.random() * 0.1));
+    const cy0 = Math.floor(H * (0.35 + ctx.random() * 0.1));
+    const cy1 = Math.ceil(H * (0.55 + ctx.random() * 0.1));
+
+    // First pass: seed each tile from the biome's weighted distribution.
+    const grid: string[][] = [];
+    for (let x = 0; x < W; x++) {
+      grid[x] = [];
+      for (let y = 0; y < H; y++) {
+        const isCenter = x >= cx0 && x < cx1 && y >= cy0 && y < cy1;
+        grid[x][y] = isCenter ? 'CORNUCOPIA' : weightedPick(ctx, weights);
+      }
+    }
+    // Smoothing pass: tiles partially adopt a neighbor's type so terrain
+    // clumps into believable regions (forests, lakes, ruins) rather than static.
+    const final: string[][] = [];
+    for (let x = 0; x < W; x++) {
+      final[x] = [];
+      for (let y = 0; y < H; y++) {
+        if (grid[x][y] === 'CORNUCOPIA') { final[x][y] = 'CORNUCOPIA'; continue; }
+        if (ctx.random() < 0.4) {
+          const neighbors = [[x-1,y],[x+1,y],[x,y-1],[x,y+1]].filter(([nx,ny]) => nx >= 0 && nx < W && ny >= 0 && ny < H && grid[nx][ny] !== 'CORNUCOPIA');
+          if (neighbors.length) {
+            const [nx, ny] = neighbors[ctx.random.integerInRange(0, neighbors.length - 1)];
+            final[x][y] = grid[nx][ny];
+            continue;
+          }
+        }
+        final[x][y] = grid[x][y];
+      }
+    }
+
+    const resourceTypes = ['FOOD','WATER','MEDKIT','WEAPON','ARMOR','INTEL'];
+    const resourceChance = 0.16 + stakeRoll * 0.1;
     for (let x = 0; x < W; x++) {
       for (let y = 0; y < H; y++) {
-        const isCenter   = x >= 4 && x <= 7 && y >= 4 && y <= 7;
-        const tileType   = isCenter ? 'CORNUCOPIA' : terrainTypes[(x * 3 + y * 7) % terrainTypes.length];
-        const hasResource = (x * 13 + y * 17) % 10 < 3;
-        const resourceTypes = ['FOOD','WATER','MEDKIT','WEAPON','FOOD','WATER','FOOD','INTEL'];
-        const resourceType  = hasResource ? resourceTypes[(x * 5 + y * 11) % resourceTypes.length] : undefined;
+        const tileType = final[x][y];
+        const hasResource = tileType !== 'CORNUCOPIA' && ctx.random() < resourceChance;
+        const resourceType = hasResource ? resourceTypes[ctx.random.integerInRange(0, resourceTypes.length - 1)] : undefined;
         ctx.db.arenaTile.insert({ id: 0, tournamentId: tournament.id, x, y, tileType, hasResource, resourceType });
       }
     }
+    ctx.db.tournament.id.update({ ...tournament, gridWidth: W, gridHeight: H, prizePool, status: 'LIVE', currentHour: 1 });
     const allFighters = [...ctx.db.fighterTemplate.iter()];
+    const fighterCount = ctx.random.integerInRange(8, Math.min(16, allFighters.length || 8));
     const selected    = allFighters
-      .map((f: any, i: number) => ({ f, sort: (i * Number(tournament.id) * 31 + 7) % 1000 }))
+      .map((f: any, i: number) => ({ f, sort: ctx.random() }))
       .sort((a: any, b: any) => a.sort - b.sort)
-      .slice(0, 10).map((x: any) => x.f);
-    const spawnPoints = [
-      {x:0,y:0},{x:11,y:0},{x:0,y:11},{x:11,y:11},
-      {x:5,y:0},{x:0,y:5},{x:11,y:5},{x:5,y:11},{x:2,y:2},{x:9,y:9},
+      .slice(0, fighterCount).map((x: any) => x.f);
+
+    // Spawn points ring the arena edges and corners, scaled to this map's size.
+    const spawnPoints: { x: number; y: number }[] = [];
+    const ring = [
+      [0, 0], [W - 1, 0], [0, H - 1], [W - 1, H - 1],
+      [Math.floor(W / 2), 0], [0, Math.floor(H / 2)],
+      [W - 1, Math.floor(H / 2)], [Math.floor(W / 2), H - 1],
+      [Math.floor(W * 0.25), Math.floor(H * 0.25)], [Math.floor(W * 0.75), Math.floor(H * 0.75)],
+      [Math.floor(W * 0.25), Math.floor(H * 0.75)], [Math.floor(W * 0.75), Math.floor(H * 0.25)],
+      [Math.floor(W * 0.15), Math.floor(H * 0.5)], [Math.floor(W * 0.85), Math.floor(H * 0.5)],
+      [Math.floor(W * 0.5), Math.floor(H * 0.15)], [Math.floor(W * 0.5), Math.floor(H * 0.85)],
     ];
+    for (const [x, y] of ring) spawnPoints.push({ x: clamp(x, 0, W - 1), y: clamp(y, 0, H - 1) });
+
     for (let i = 0; i < selected.length; i++) {
-      const f = selected[i]; const pos = spawnPoints[i];
+      const f = selected[i]; const pos = spawnPoints[i % spawnPoints.length];
       ctx.db.tournamentFighter.insert({
         id: 0, tournamentId: tournament.id, fighterId: f.id,
         isAlive: true, x: pos.x, y: pos.y,
@@ -401,10 +551,10 @@ export const startTournament = spacetimedb.reducer(
       });
       ctx.db.fighterTemplate.id.update({ ...f, tournamentsPlayed: f.tournamentsPlayed + 1 });
     }
-    ctx.db.tournament.id.update({ ...tournament, status: 'LIVE', currentHour: 1 });
+    const stakesLabel = stakeRoll > 0.66 ? 'High-stakes' : stakeRoll > 0.33 ? 'Mid-tier' : 'Standard';
     ctx.db.liveEvent.insert({
       id: 0, tournamentId: tournament.id, hour: 0, eventType: 'PHASE',
-      description: `The arena opens. ${selected.length} fighters enter the ${tournament.arenaType}.`,
+      description: `${stakesLabel} arena opens — a ${W}x${H} ${tournament.arenaType} battleground. ${selected.length} fighters enter. Prize pool: $${prizePool}.`,
       involvedIds: JSON.stringify(selected.map((f: any) => f.id)),
       x: undefined, y: undefined, timestamp: ctx.timestamp,
     });
@@ -423,7 +573,7 @@ export const advanceHour = spacetimedb.reducer(
     const allTf = [...ctx.db.tournamentFighter.iter()]
       .filter((tf: any) => Number(tf.tournamentId) === Number(tournamentId));
     const alive = allTf.filter((tf: any) => tf.isAlive);
-    if (alive.length <= 1) { endTournament(ctx, tournament, alive, hour); return; }
+    if (alive.length <= 1 || hour >= MAX_TOURNAMENT_HOURS) { endTournament(ctx, tournament, alive, hour); return; }
 
     let parsedDecisions: any[] = [];
     try { parsedDecisions = JSON.parse(decisions); } catch {}
@@ -596,7 +746,7 @@ export const advanceHour = spacetimedb.reducer(
     processSponsorDrops(ctx, tournamentId, hour);
     const stillAlive = [...ctx.db.tournamentFighter.iter()]
       .filter((tf: any) => Number(tf.tournamentId) === Number(tournamentId) && tf.isAlive);
-    if (stillAlive.length <= 1) endTournament(ctx, tournament, stillAlive, hour);
+    if (stillAlive.length <= 1 || hour + 1 >= MAX_TOURNAMENT_HOURS) endTournament(ctx, tournament, stillAlive, hour + 1);
     else ctx.db.tournament.id.update({ ...tournament, currentHour: hour + 1 });
   }
 );
@@ -606,10 +756,10 @@ export const placeBet = spacetimedb.reducer(
   { fighterId: t.u32(), betType: t.string(), amount: t.f64() },
   (ctx, { fighterId, betType, amount }) => {
     const user = ctx.db.user.identity.find(ctx.sender);
-    if (!user) throw new Error('Not registered');
-    if (user.balance < amount) throw new Error('Insufficient funds');
+    if (!user) throw new SenderError('Not registered');
+    if (user.balance < amount) throw new SenderError('Insufficient funds');
     const tournament = [...ctx.db.tournament.iter()].find((t: any) => t.status === 'UPCOMING');
-    if (!tournament) throw new Error('No upcoming tournament');
+    if (!tournament) throw new SenderError('No upcoming tournament');
     const oddsMap: Record<string, number> = {
       WIN: 9.0, DIES_FIRST: 22.0, SURVIVES_DAY_1: 1.8, MOST_KILLS: 6.0, FORMS_ALLIANCE: 2.1,
     };
@@ -628,27 +778,27 @@ export const sponsorFighter = spacetimedb.reducer(
   { fighterId: t.u32(), itemType: t.string() },
   (ctx, { fighterId, itemType }) => {
     const user = ctx.db.user.identity.find(ctx.sender);
-    if (!user) throw new Error('Not registered');
+    if (!user) throw new SenderError('Not registered');
     const costMap: Record<string, number> = {
       FOOD: 50, WATER: 50, MEDKIT: 150, SMOKE_BOMB: 175, WEAPON: 400, INTEL: 250,
     };
     const cost = costMap[itemType];
-    if (!cost) throw new Error('Invalid item type');
-    if (user.balance < cost) throw new Error('Insufficient funds');
+    if (!cost) throw new SenderError('Invalid item type');
+    if (user.balance < cost) throw new SenderError('Insufficient funds');
     const tournament = [...ctx.db.tournament.iter()].find((t: any) => t.status === 'LIVE');
-    if (!tournament) throw new Error('No live tournament');
+    if (!tournament) throw new SenderError('No live tournament');
     const hasBet = [...ctx.db.bet.iter()].some((b: any) =>
       b.userId.toHexString() === ctx.sender.toHexString() &&
       Number(b.tournamentId) === Number(tournament.id) &&
       Number(b.fighterId) === Number(fighterId) && b.status === 'PENDING'
     );
-    if (!hasBet) throw new Error('You must have an active bet on this fighter to sponsor them');
+    if (!hasBet) throw new SenderError('You must have an active bet on this fighter to sponsor them');
     const recentDrops = [...ctx.db.sponsorDrop.iter()].filter((d: any) =>
       Number(d.tournamentId) === Number(tournament.id) &&
       Number(d.fighterId) === Number(fighterId) &&
       Number(d.queuedHour) + 3 > Number(tournament.currentHour)
     );
-    if (recentDrops.length > 0) throw new Error('Sponsorship on cooldown (3 hour cooldown)');
+    if (recentDrops.length > 0) throw new SenderError('Sponsorship on cooldown (3 hour cooldown)');
     ctx.db.user.identity.update({ ...user, balance: user.balance - cost });
     ctx.db.sponsorDrop.insert({
       id: 0, tournamentId: tournament.id, userId: ctx.sender,
@@ -664,8 +814,8 @@ export const createFighter = spacetimedb.reducer(
   { name: t.string(), lore: t.string(), archetype: t.string(), strength: t.u8(), speed: t.u8(), intelligence: t.u8(), luck: t.u8(), charisma: t.u8() },
   (ctx, args) => {
     const user = ctx.db.user.identity.find(ctx.sender);
-    if (!user) throw new Error('Not registered');
-    if (user.balance < 500) throw new Error('Need $500 to create a fighter');
+    if (!user) throw new SenderError('Not registered');
+    if (user.balance < 500) throw new SenderError('Need $500 to create a fighter');
     ctx.db.user.identity.update({ ...user, balance: user.balance - 500, fightersOwned: user.fightersOwned + 1 });
     ctx.db.fighterTemplate.insert({ id: 0, ...args, wins: 0, tournamentsPlayed: 0, isUserCreated: true, ownerIdentity: ctx.sender });
   }
@@ -676,15 +826,17 @@ export const hostTournament = spacetimedb.reducer(
   { name: t.string(), arenaType: t.string() },
   (ctx, args) => {
     const user = ctx.db.user.identity.find(ctx.sender);
-    if (!user) throw new Error('Not registered');
-    if (user.fightersOwned < 10) throw new Error('Need 10 fighters to host');
-    if (user.balance < 1000)     throw new Error('Need $1000 to host');
+    if (!user) throw new SenderError('Not registered');
+    if (user.fightersOwned < 10) throw new SenderError('Need 10 fighters to host');
+    if (user.balance < 1000)     throw new SenderError('Need $1000 to host');
     ctx.db.user.identity.update({ ...user, balance: user.balance - 1000, tournamentsHosted: user.tournamentsHosted + 1 });
-    ctx.db.tournament.insert({
+    const tournamentId = ctx.db.tournament.insert({
       id: 0, ...args, status: 'UPCOMING', currentHour: 0,
       gridWidth: 12, gridHeight: 12, prizePool: 0,
       hostIdentity: ctx.sender, createdAt: ctx.timestamp,
-    });
+    }).id;
+    notifyAllUsers(ctx, 'TOURNAMENT', 'New Tournament Announced',
+      `"${args.name}" is opening in the ${args.arenaType}. Place your bets!`, tournamentId, ctx.sender);
   }
 );
 
@@ -693,8 +845,122 @@ export const placeBid = spacetimedb.reducer(
   { fighterId: t.u32(), amount: t.f64() },
   (ctx, { fighterId, amount }) => {
     const user = ctx.db.user.identity.find(ctx.sender);
-    if (!user) throw new Error('Not registered');
-    if (user.balance < amount) throw new Error('Insufficient funds');
+    if (!user) throw new SenderError('Not registered');
+    if (user.balance < amount) throw new SenderError('Insufficient funds');
     ctx.db.auctionBid.insert({ id: 0, fighterId, bidderId: ctx.sender, amount, placedAt: ctx.timestamp });
+  }
+);
+// ─── PROFILE & SOCIAL ─────────────────────────────────────────────────────────
+
+export const updateProfile = spacetimedb.reducer(
+  { name: 'updateProfile' },
+  { bio: t.string(), avatarEmoji: t.string(), favoriteArchetype: t.string() },
+  (ctx, { bio, avatarEmoji, favoriteArchetype }) => {
+    const user = ctx.db.user.identity.find(ctx.sender);
+    if (!user) throw new SenderError('Not registered');
+    if (bio.length > 280) throw new SenderError('Bio is too long (max 280 characters)');
+    ctx.db.user.identity.update({ ...user, bio, avatarEmoji, favoriteArchetype });
+  }
+);
+
+export const sendFriendRequest = spacetimedb.reducer(
+  { name: 'sendFriendRequest' },
+  { addresseeId: t.identity() },
+  (ctx, { addresseeId }) => {
+    const me = ctx.db.user.identity.find(ctx.sender);
+    if (!me) throw new SenderError('Not registered');
+    if (ctx.sender.isEqual ? ctx.sender.isEqual(addresseeId) : ctx.sender.toHexString() === addresseeId.toHexString()) {
+      throw new SenderError('You cannot friend yourself');
+    }
+    const target = ctx.db.user.identity.find(addresseeId);
+    if (!target) throw new SenderError('Player not found');
+
+    const existing = [...ctx.db.friendship.iter()].find((f: any) =>
+      (f.requesterId.toHexString() === ctx.sender.toHexString() && f.addresseeId.toHexString() === addresseeId.toHexString()) ||
+      (f.requesterId.toHexString() === addresseeId.toHexString() && f.addresseeId.toHexString() === ctx.sender.toHexString())
+    );
+    if (existing) throw new SenderError('A friend request already exists with this player');
+
+    const fr = ctx.db.friendship.insert({
+      id: 0, requesterId: ctx.sender, addresseeId, status: 'PENDING', createdAt: ctx.timestamp,
+    });
+    ctx.db.notification.insert({
+      id: 0, recipientId: addresseeId, kind: 'FRIEND_REQUEST',
+      title: 'New Friend Request',
+      body: `${me.username} wants to be your friend.`,
+      relatedId: fr.id, read: false, createdAt: ctx.timestamp,
+    });
+  }
+);
+
+export const respondToFriendRequest = spacetimedb.reducer(
+  { name: 'respondToFriendRequest' },
+  { friendshipId: t.u32(), accept: t.bool() },
+  (ctx, { friendshipId, accept }) => {
+    const fr = ctx.db.friendship.id.find(friendshipId);
+    if (!fr) throw new SenderError('Friend request not found');
+    if (fr.addresseeId.toHexString() !== ctx.sender.toHexString()) throw new SenderError('Not your request to respond to');
+    if (fr.status !== 'PENDING') throw new SenderError('Request already resolved');
+
+    if (accept) {
+      ctx.db.friendship.id.update({ ...fr, status: 'ACCEPTED' });
+      const me = ctx.db.user.identity.find(ctx.sender);
+      ctx.db.notification.insert({
+        id: 0, recipientId: fr.requesterId, kind: 'FRIEND_ACCEPTED',
+        title: 'Friend Request Accepted',
+        body: `${me?.username ?? 'A player'} accepted your friend request.`,
+        relatedId: fr.id, read: false, createdAt: ctx.timestamp,
+      });
+    } else {
+      ctx.db.friendship.id.delete(friendshipId);
+    }
+  }
+);
+
+export const removeFriend = spacetimedb.reducer(
+  { name: 'removeFriend' },
+  { friendshipId: t.u32() },
+  (ctx, { friendshipId }) => {
+    const fr = ctx.db.friendship.id.find(friendshipId);
+    if (!fr) throw new SenderError('Friendship not found');
+    const mine = fr.requesterId.toHexString() === ctx.sender.toHexString() || fr.addresseeId.toHexString() === ctx.sender.toHexString();
+    if (!mine) throw new SenderError('Not your friendship to remove');
+    ctx.db.friendship.id.delete(friendshipId);
+  }
+);
+
+export const markNotificationRead = spacetimedb.reducer(
+  { name: 'markNotificationRead' },
+  { notificationId: t.u32() },
+  (ctx, { notificationId }) => {
+    const n = ctx.db.notification.id.find(notificationId);
+    if (!n) throw new SenderError('Notification not found');
+    if (n.recipientId.toHexString() !== ctx.sender.toHexString()) throw new SenderError('Not your notification');
+    if (!n.read) ctx.db.notification.id.update({ ...n, read: true });
+  }
+);
+
+export const markAllNotificationsRead = spacetimedb.reducer(
+  { name: 'markAllNotificationsRead' },
+  {},
+  (ctx, _args) => {
+    const mine = [...ctx.db.notification.recipientId.filter(ctx.sender)].filter((n: any) => !n.read);
+    for (const n of mine) ctx.db.notification.id.update({ ...n, read: true });
+  }
+);
+
+export const updateAccount = spacetimedb.reducer(
+  { name: 'updateAccount' },
+  { username: t.string() },
+  (ctx, { username }) => {
+    const me = ctx.db.user.identity.find(ctx.sender);
+    if (!me) throw new SenderError('Not registered');
+    const trimmed = username.trim();
+    if (trimmed.length < 3 || trimmed.length > 24) throw new SenderError('Username must be 3-24 characters');
+    if (trimmed !== me.username) {
+      const taken = [...ctx.db.user.iter()].find((u: any) => u.username === trimmed && u.identity.toHexString() !== ctx.sender.toHexString());
+      if (taken) throw new SenderError('Username already taken');
+    }
+    ctx.db.user.identity.update({ ...me, username: trimmed });
   }
 );

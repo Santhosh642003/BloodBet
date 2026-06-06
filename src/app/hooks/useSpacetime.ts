@@ -31,6 +31,8 @@ export function useSpacetime() {
   const [contracts, setContracts]                   = useState<any[]>([]);
   const [auctionBids, setAuctionBids]               = useState<any[]>([]);
   const [users, setUsers]                           = useState<any[]>([]);
+  const [friendships, setFriendships]               = useState<any[]>([]);
+  const [notifications, setNotifications]           = useState<any[]>([]);
 
   useEffect(() => {
     const token = localStorage.getItem('spacetime_token') ?? undefined;
@@ -56,10 +58,10 @@ export function useSpacetime() {
             setContracts(normalizeAll(ctx.db.contract.iter()));
             setAuctionBids(normalizeAll(ctx.db.auctionBid.iter()));
             setUsers(normalizeAll(ctx.db.user.iter()));
+            setFriendships(normalizeAll(ctx.db.friendship.iter()));
+            setNotifications(normalizeAll(ctx.db.notification.iter()).filter(n => n.recipientId?.toHexString?.() === id.toHexString()));
 
-            // Auto-login: find user for this identity, or grab first available
-            const me = ctx.db.user.identity.find(id)
-              ?? [...ctx.db.user.iter()][0];
+            const me = ctx.db.user.identity.find(id);
             if (me) setCurrentUser(normalize(me));
           })
           .subscribe([
@@ -73,6 +75,8 @@ export function useSpacetime() {
             tables.sponsorDrop,
             tables.contract,
             tables.auctionBid,
+            tables.friendship,
+            tables.notification,
           ]);
 
         ctx.db.fighterTemplate.onInsert(()   => setFighters(normalizeAll(ctx.db.fighterTemplate.iter())));
@@ -91,6 +95,15 @@ export function useSpacetime() {
         ctx.db.contract.onInsert(()          => setContracts(normalizeAll(ctx.db.contract.iter())));
         ctx.db.contract.onUpdate(()          => setContracts(normalizeAll(ctx.db.contract.iter())));
         ctx.db.auctionBid.onInsert(()        => setAuctionBids(normalizeAll(ctx.db.auctionBid.iter())));
+        ctx.db.friendship.onInsert(()        => setFriendships(normalizeAll(ctx.db.friendship.iter())));
+        ctx.db.friendship.onUpdate(()        => setFriendships(normalizeAll(ctx.db.friendship.iter())));
+        ctx.db.friendship.onDelete(()        => setFriendships(normalizeAll(ctx.db.friendship.iter())));
+        const refreshNotifications = () => setNotifications(
+          normalizeAll(ctx.db.notification.iter()).filter((n: any) => n.recipientId?.toHexString?.() === id.toHexString())
+        );
+        ctx.db.notification.onInsert(refreshNotifications);
+        ctx.db.notification.onUpdate(refreshNotifications);
+        ctx.db.notification.onDelete(refreshNotifications);
         ctx.db.user.onInsert((_ctx: EventContext, row: any) => {
           setUsers(normalizeAll(ctx.db.user.iter()));
           if (row.identity.toHexString() === id.toHexString()) setCurrentUser(normalize(row));
@@ -109,23 +122,30 @@ export function useSpacetime() {
   }, []);
 
   const register = useCallback((username: string, email: string, passwordHash: string) => {
-    conn?.reducers.registerUser(username, email, passwordHash);
+    if (!conn) return Promise.reject(new Error('Not connected to the arena yet'));
+    return conn.reducers.registerUser({ username, email, passwordHash });
+  }, [conn]);
+
+  const updateAccount = useCallback((username: string) => {
+    if (!conn) return Promise.reject(new Error('Not connected to the arena yet'));
+    return conn.reducers.updateAccount({ username });
   }, [conn]);
 
   const verifyLogin = useCallback((usernameOrEmail: string, passwordHash: string) => {
-    conn?.reducers.verifyLogin(usernameOrEmail, passwordHash);
+    if (!conn) return Promise.reject(new Error('Not connected to the arena yet'));
+    return conn.reducers.verifyLogin({ usernameOrEmail, passwordHash });
   }, [conn]);
 
   const placeBet = useCallback((fighterId: number, betType: string, amount: number) => {
-    conn?.reducers.placeBet(fighterId, betType, amount);
+    conn?.reducers.placeBet({ fighterId, betType, amount });
   }, [conn]);
 
   const sponsorFighter = useCallback((fighterId: number, itemType: string) => {
-    conn?.reducers.sponsorFighter(fighterId, itemType);
+    conn?.reducers.sponsorFighter({ fighterId, itemType });
   }, [conn]);
 
   const createTournament = useCallback((name: string, arenaType: string) => {
-    conn?.reducers.createTournament(name, arenaType);
+    conn?.reducers.createTournament({ name, arenaType });
   }, [conn]);
 
   const createFighter = useCallback((
@@ -133,15 +153,45 @@ export function useSpacetime() {
     strength: number, speed: number, intelligence: number,
     luck: number, charisma: number
   ) => {
-    conn?.reducers.createFighter(name, lore, archetype, strength, speed, intelligence, luck, charisma);
+    conn?.reducers.createFighter({ name, lore, archetype, strength, speed, intelligence, luck, charisma });
   }, [conn]);
 
   const hostTournament = useCallback((name: string, arenaType: string) => {
-    conn?.reducers.hostTournament(name, arenaType);
+    conn?.reducers.hostTournament({ name, arenaType });
   }, [conn]);
 
   const placeBid = useCallback((fighterId: number, amount: number) => {
-    conn?.reducers.placeBid(fighterId, amount);
+    conn?.reducers.placeBid({ fighterId, amount });
+  }, [conn]);
+
+  const updateProfile = useCallback((bio: string, avatarEmoji: string, favoriteArchetype: string) => {
+    if (!conn) return Promise.reject(new Error('Not connected to the arena yet'));
+    return conn.reducers.updateProfile({ bio, avatarEmoji, favoriteArchetype });
+  }, [conn]);
+
+  const sendFriendRequest = useCallback((addresseeId: any) => {
+    if (!conn) return Promise.reject(new Error('Not connected to the arena yet'));
+    return conn.reducers.sendFriendRequest({ addresseeId });
+  }, [conn]);
+
+  const respondToFriendRequest = useCallback((friendshipId: number, accept: boolean) => {
+    if (!conn) return Promise.reject(new Error('Not connected to the arena yet'));
+    return conn.reducers.respondToFriendRequest({ friendshipId, accept });
+  }, [conn]);
+
+  const removeFriend = useCallback((friendshipId: number) => {
+    if (!conn) return Promise.reject(new Error('Not connected to the arena yet'));
+    return conn.reducers.removeFriend({ friendshipId });
+  }, [conn]);
+
+  const markNotificationRead = useCallback((notificationId: number) => {
+    if (!conn) return Promise.reject(new Error('Not connected to the arena yet'));
+    return conn.reducers.markNotificationRead({ notificationId });
+  }, [conn]);
+
+  const markAllNotificationsRead = useCallback(() => {
+    if (!conn) return Promise.reject(new Error('Not connected to the arena yet'));
+    return conn.reducers.markAllNotificationsRead({});
   }, [conn]);
 
   const logout = useCallback(() => {
@@ -153,8 +203,10 @@ export function useSpacetime() {
   return {
     conn, identity, connected, currentUser,
     fighters, tournaments, tournamentFighters, arenaTiles,
-    bets, liveEvents, sponsorDrops, contracts, auctionBids, users,
-    register, verifyLogin, placeBet, sponsorFighter,
+    bets, liveEvents, sponsorDrops, contracts, auctionBids, users, friendships, notifications,
+    register, verifyLogin, updateAccount, placeBet, sponsorFighter,
     createTournament, createFighter, hostTournament, placeBid, logout,
+    updateProfile, sendFriendRequest, respondToFriendRequest, removeFriend,
+    markNotificationRead, markAllNotificationsRead,
   };
 }

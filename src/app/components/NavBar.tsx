@@ -1,7 +1,9 @@
 import { useNavigate, useLocation } from 'react-router';
-import { Wallet, LogOut, Menu, X } from 'lucide-react';
+import { Wallet, LogOut, Menu, X, Volume2, VolumeX } from 'lucide-react';
 import { useState } from 'react';
 import { useDB } from '../context/SpacetimeContext';
+import { useSound } from '../context/SoundContext';
+import { NotificationCenter } from './NotificationCenter';
 
 const NAV_LINKS = [
   { label: 'Tournaments', path: '/tournament' },
@@ -10,12 +12,15 @@ const NAV_LINKS = [
   { label: 'Build',       path: '/build-fighter' },
   { label: 'Host',        path: '/host-tournament' },
   { label: 'Leaderboard', path: '/leaderboard' },
+  { label: 'History',     path: '/tournament-history' },
+  { label: 'Players',     path: '/players' },
 ];
 
 export function NavBar() {
   const navigate  = useNavigate();
   const location  = useLocation();
   const { currentUser, connected, logout } = useDB();
+  const { enabled: soundOn, toggle: toggleSound } = useSound();
   const [menuOpen, setMenuOpen] = useState(false);
 
   const balance  = Number(currentUser?.balance ?? 0).toFixed(2);
@@ -55,6 +60,16 @@ export function NavBar() {
           {/* Connection dot */}
           <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-yellow-500'} animate-pulse`} />
 
+          {/* Notifications */}
+          <NotificationCenter />
+
+          {/* Sound toggle */}
+          <button onClick={toggleSound}
+            className="text-text-secondary hover:text-accent-gold transition-colors p-1"
+            title={soundOn ? 'Mute sound effects' : 'Unmute sound effects'}>
+            {soundOn ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+          </button>
+
           {/* Balance */}
           <div className="hidden sm:flex items-center gap-2 bg-bg-secondary border border-accent-gold px-3 py-1.5">
             <Wallet className="w-4 h-4 text-accent-gold" />
@@ -63,8 +78,9 @@ export function NavBar() {
 
           {/* Avatar */}
           <div className="w-9 h-9 bg-bg-secondary border border-accent-gold flex items-center justify-center font-display text-accent-gold uppercase text-sm cursor-pointer"
-            onClick={() => navigate('/dashboard')}>
-            {username[0] ?? 'U'}
+            onClick={() => navigate('/profile')}
+            title="Profile">
+            {currentUser?.avatarEmoji ?? username[0] ?? 'U'}
           </div>
 
           {/* Logout */}
