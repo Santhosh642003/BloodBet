@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { CharacterCard } from '../components/CharacterCard';
+import { ArenaMap } from '../components/ArenaMap';
 import { Button } from '../components/Button';
 import { NavBar } from '../components/NavBar';
 import { motion, AnimatePresence } from 'motion/react';
@@ -51,7 +52,7 @@ function useCountdown(targetMs: number | null): number {
 export function TournamentPage() {
   const navigate   = useNavigate();
   const {
-    currentUser, tournaments, fighters, tournamentFighters, bets, liveEvents,
+    currentUser, tournaments, fighters, tournamentFighters, arenaTiles, bets, liveEvents,
     placeBet, identity,
   } = useDB();
 
@@ -219,6 +220,19 @@ export function TournamentPage() {
           <div className="mb-8 text-center py-16">
             <div className="font-display text-4xl text-text-secondary mb-4">NO ACTIVE TOURNAMENT</div>
             <div className="font-mono text-text-secondary">The orchestrator will create one shortly.</div>
+          </div>
+        )}
+
+        {activeTournament?.status === 'LIVE' && (
+          <div className="mb-8">
+            <ArenaMap
+              width={Number(activeTournament.gridWidth ?? 12)}
+              height={Number(activeTournament.gridHeight ?? 12)}
+              tiles={arenaTiles.filter(t => Number(t.tournamentId) === Number(activeTournament.id))}
+              roster={rosterEntries}
+              selectedFighterId={selectedFighterId}
+              onSelectFighter={(id) => { setSelectedFighterId(id); setBetError(''); setBetSuccess(''); }}
+            />
           </div>
         )}
 
