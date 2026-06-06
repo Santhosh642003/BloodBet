@@ -223,7 +223,7 @@ async function runHour(conn: DbConnection, tournamentId: number) {
   }
 
   console.log(`  → Sending ${decisions.length} decisions to advanceHour...`);
-  conn.reducers.advanceHour(tournamentId, JSON.stringify(decisions));
+  conn.reducers.advanceHour({ tournamentId, decisions: JSON.stringify(decisions) });
   console.log(`  ✓ Hour ${hour} complete`);
 }
 
@@ -262,14 +262,14 @@ function startLoop(conn: DbConnection) {
 
       console.log(`🏟️  Starting "${t.name}"...`);
       delete upcomingCreatedAt[tid];
-      conn.reducers.startTournament();
+      conn.reducers.startTournament({});
       return;
     }
 
     console.log('📣 Creating next tournament...');
     const arena = ARENA_TYPES[Math.floor(Date.now() / 1000) % ARENA_TYPES.length];
     const num   = Date.now().toString().slice(-4);
-    conn.reducers.createTournament(`Tournament #${num}`, arena);
+    conn.reducers.createTournament({ name: `Tournament #${num}`, arenaType: arena });
   }, HOUR_INTERVAL_MS);
 }
 
