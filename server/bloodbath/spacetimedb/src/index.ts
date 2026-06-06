@@ -218,12 +218,29 @@ function settleBets(ctx: any, tournamentId: number, winnerId: number) {
   if (winner) ctx.db.fighterTemplate.id.update({ ...winner, wins: winner.wins + 1 });
 }
 
+// A tournament spans 5 in-game days (24 hours each) at most.
+const MAX_TOURNAMENT_HOURS = 5 * 24;
+
+function pickWinner(survivors: any[]): any {
+  if (survivors.length <= 1) return survivors[0];
+  return [...survivors].sort((a: any, b: any) => {
+    if (Number(b.kills) !== Number(a.kills)) return Number(b.kills) - Number(a.kills);
+    return Number(a.injury) - Number(b.injury);
+  })[0];
+}
+
 function endTournament(ctx: any, tournament: any, survivors: any[], hour: number) {
-  const winnerId = survivors[0]?.fighterId ?? 0;
-  const winner   = [...ctx.db.fighterTemplate.iter()].find((f: any) => Number(f.id) === Number(winnerId));
+  const winnerEntry = pickWinner(survivors);
+  const winnerId    = winnerEntry?.fighterId ?? 0;
+  const winner      = [...ctx.db.fighterTemplate.iter()].find((f: any) => Number(f.id) === Number(winnerId));
+  const reason      = survivors.length === 1
+    ? `${winner?.name ?? 'The last fighter'} is the last one standing!`
+    : winner
+      ? `Time's up! ${winner.name} wins by survival of the fittest (${Number(winnerEntry.kills)} kills, least injured).`
+      : 'No survivors.';
   ctx.db.liveEvent.insert({
     id: 0, tournamentId: tournament.id, hour, eventType: 'PHASE',
-    description: winner ? `${winner.name} is the last fighter standing!` : 'No survivors.',
+    description: reason,
     involvedIds: JSON.stringify(winnerId ? [winnerId] : []),
     x: undefined, y: undefined, timestamp: ctx.timestamp,
   });
@@ -429,7 +446,7 @@ export const advanceHour = spacetimedb.reducer(
     const allTf = [...ctx.db.tournamentFighter.iter()]
       .filter((tf: any) => Number(tf.tournamentId) === Number(tournamentId));
     const alive = allTf.filter((tf: any) => tf.isAlive);
-    if (alive.length <= 1) { endTournament(ctx, tournament, alive, hour); return; }
+    if (alive.length <= 1 || hour >= MAX_TOURNAMENT_HOURS) { endTournament(ctx, tournament, alive, hour); return; }
 
     let parsedDecisions: any[] = [];
     try { parsedDecisions = JSON.parse(decisions); } catch {}
@@ -602,7 +619,7 @@ export const advanceHour = spacetimedb.reducer(
     processSponsorDrops(ctx, tournamentId, hour);
     const stillAlive = [...ctx.db.tournamentFighter.iter()]
       .filter((tf: any) => Number(tf.tournamentId) === Number(tournamentId) && tf.isAlive);
-    if (stillAlive.length <= 1) endTournament(ctx, tournament, stillAlive, hour);
+    if (stillAlive.length <= 1 || hour + 1 >= MAX_TOURNAMENT_HOURS) endTournament(ctx, tournament, stillAlive, hour + 1);
     else ctx.db.tournament.id.update({ ...tournament, currentHour: hour + 1 });
   }
 );

@@ -5,7 +5,7 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const SPACETIME_URI     = 'wss://maincloud.spacetimedb.com';
 const DB_NAME           = 'bloodbet';
-const HOUR_INTERVAL_MS  = 15000;
+const HOUR_INTERVAL_MS  = 10000;
 const BETTING_WINDOW_MS = 2 * 60 * 1000;
 
 const ARENA_TYPES = [
