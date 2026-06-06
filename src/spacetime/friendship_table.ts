@@ -12,14 +12,8 @@ import {
 
 export default __t.row({
   id: __t.u32().primaryKey(),
-  name: __t.string(),
-  arenaType: __t.string().name("arena_type"),
+  requesterId: __t.identity().name("requester_id"),
+  addresseeId: __t.identity().name("addressee_id"),
   status: __t.string(),
-  currentHour: __t.u32().name("current_hour"),
-  gridWidth: __t.u8().name("grid_width"),
-  gridHeight: __t.u8().name("grid_height"),
-  prizePool: __t.f64().name("prize_pool"),
-  hostIdentity: __t.option(__t.identity()).name("host_identity"),
-  minEventBetAmount: __t.f64().name("min_event_bet_amount"),
   createdAt: __t.timestamp().name("created_at"),
 });

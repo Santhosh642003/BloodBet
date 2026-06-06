@@ -1,2 +1,7 @@
 packages:
   - '.'
+allowBuilds:
+  '@tailwindcss/oxide': set this to true or false
+  esbuild: true
+minimumReleaseAgeExclude:
+  - '@types/react@19.2.17'

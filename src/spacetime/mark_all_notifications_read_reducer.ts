@@ -10,8 +10,4 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export default {
-  name: __t.string(),
-  arenaType: __t.string(),
-  minEventBetAmount: __t.option(__t.f64()),
-};
+export default {};

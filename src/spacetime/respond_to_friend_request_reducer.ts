@@ -11,7 +11,6 @@ import {
 } from "spacetimedb";
 
 export default {
-  name: __t.string(),
-  arenaType: __t.string(),
-  minEventBetAmount: __t.option(__t.f64()),
+  friendshipId: __t.u32(),
+  accept: __t.bool(),
 };

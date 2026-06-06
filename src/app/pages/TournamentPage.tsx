@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { CharacterCard } from '../components/CharacterCard';
 import { ArenaMap } from '../components/ArenaMap';
 import { CinematicIntro } from '../components/CinematicIntro';
+import { EventBetsPanel } from '../components/EventBetsPanel';
 import { Button } from '../components/Button';
 import { NavBar } from '../components/NavBar';
 import { motion, AnimatePresence } from 'motion/react';
@@ -442,6 +443,9 @@ export function TournamentPage() {
                 </div>
               </div>
             )}
+
+            {/* Event Bets Panel */}
+            {activeTournament && <EventBetsPanel tournamentId={Number(activeTournament.id)} />}
 
             {/* Live Event Feed */}
             <div className="bg-bg-secondary border border-separator p-6">

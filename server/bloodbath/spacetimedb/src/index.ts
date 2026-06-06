@@ -65,6 +65,7 @@ const tournament = table(
     gridHeight:   t.u8(),
     prizePool:    t.f64(),
     hostIdentity: t.option(t.identity()),
+    minEventBetAmount: t.f64(),
     createdAt:    t.timestamp(),
   }
 );
@@ -192,12 +193,41 @@ const notification = table(
   }
 );
 
+const eventBetSlip = table(
+  { name: 'eventBetSlip', public: true },
+  {
+    id:             t.u32().primaryKey().autoInc(),
+    tournamentId:   t.u32().index('btree'),
+    creatorId:      t.identity(),
+    fighter1Id:     t.u32(),
+    action:         t.string(), // KILLS, DIES, ALLIES_WITH
+    fighter2Id:     t.u32(),    // 0 for 'Any'
+    roundsDuration: t.u32(),
+    startHour:      t.u32(),
+    status:         t.string(), // OPEN, RESOLVED_YES, RESOLVED_NO
+    createdAt:      t.timestamp(),
+  }
+);
+
+const eventBetPosition = table(
+  { name: 'eventBetPosition', public: true },
+  {
+    id:       t.u32().primaryKey().autoInc(),
+    slipId:   t.u32().index('btree'),
+    userId:   t.identity(),
+    side:     t.string(), // FOR, AGAINST
+    amount:   t.f64(),
+    placedAt: t.timestamp(),
+  }
+);
+
 // ─── SCHEMA ───────────────────────────────────────────────────────────────────
 
 const spacetimedb = schema({
   user, fighterTemplate, tournament, arenaTile,
   tournamentFighter, bet, sponsorDrop, liveEvent,
   contract, auctionBid, friendship, notification,
+  eventBetSlip, eventBetPosition,
 });
 
 export default spacetimedb;
@@ -235,10 +265,9 @@ function settleBets(ctx: any, tournamentId: number, winnerId: number) {
         .sort((a: any, z: any) => (Number(a.eliminatedHour) || 999) - (Number(z.eliminatedHour) || 999))[0];
       won = Number(firstDead?.fighterId) === Number(b.fighterId);
     }
-    if (b.betType === 'SURVIVES_DAY_1') won = tf ? (tf.eliminatedHour === undefined || Number(tf.eliminatedHour) > 24) : false;
-    if (b.betType === 'MOST_KILLS') {
-      const top = allTf.sort((a: any, z: any) => Number(z.kills) - Number(a.kills))[0];
-      won = Number(top?.fighterId) === Number(b.fighterId);
+    if (b.betType === 'SURVIVES_ROUND_1') won = tf ? (tf.eliminatedHour === undefined || Number(tf.eliminatedHour) > 24) : false;
+    if (b.betType === 'KILLS_3_PLUS') {
+      won = tf ? Number(tf.kills) >= 3 : false;
     }
     if (b.betType === 'FORMS_ALLIANCE') won = tf ? JSON.parse(tf.alliances).length > 0 : false;
 
@@ -252,6 +281,55 @@ function settleBets(ctx: any, tournamentId: number, winnerId: number) {
   }
   const winner = [...ctx.db.fighterTemplate.iter()].find((f: any) => Number(f.id) === Number(winnerId));
   if (winner) ctx.db.fighterTemplate.id.update({ ...winner, wins: winner.wins + 1 });
+}
+
+function resolveEventBetSlip(ctx: any, slipId: number, resolution: string) {
+  const slip = ctx.db.eventBetSlip.id.find(slipId);
+  if (!slip || slip.status !== 'OPEN') return;
+  
+  ctx.db.eventBetSlip.id.update({ ...slip, status: resolution });
+  
+  const positions = [...ctx.db.eventBetPosition.iter()].filter((p: any) => Number(p.slipId) === Number(slipId));
+  
+  let poolFor = 0;
+  let poolAgainst = 0;
+  
+  for (const p of positions) {
+    if (p.side === 'FOR') poolFor += p.amount;
+    else poolAgainst += p.amount;
+  }
+  
+  const totalPool = poolFor + poolAgainst;
+  
+  const winningSide = resolution === 'RESOLVED_YES' ? 'FOR' : 'AGAINST';
+  const winningPool = winningSide === 'FOR' ? poolFor : poolAgainst;
+  
+  if (winningPool > 0) {
+    for (const p of positions) {
+      if (p.side === winningSide) {
+        const share = p.amount / winningPool;
+        const payout = share * totalPool;
+        const u = ctx.db.user.identity.find(p.userId);
+        if (u) {
+          ctx.db.user.identity.update({ ...u, balance: u.balance + payout });
+        }
+      }
+    }
+  }
+}
+
+function checkEventBets(ctx: any, tournamentId: number, hour: number, action: string, fighter1Id: number, fighter2Id?: number) {
+  const openSlips = [...ctx.db.eventBetSlip.iter()].filter((s: any) => 
+    Number(s.tournamentId) === Number(tournamentId) && s.status === 'OPEN'
+  );
+  
+  for (const s of openSlips) {
+    if (s.action === action && Number(s.fighter1Id) === Number(fighter1Id)) {
+      if (Number(s.fighter2Id) === 0 || Number(s.fighter2Id) === Number(fighter2Id)) {
+        resolveEventBetSlip(ctx, s.id, 'RESOLVED_YES');
+      }
+    }
+  }
 }
 
 // A tournament spans 5 in-game days (24 hours each) at most.
@@ -424,12 +502,12 @@ function notifyAllUsers(ctx: any, kind: string, title: string, body: string, rel
 
 export const createTournament = spacetimedb.reducer(
   { name: 'createTournament' },
-  { name: t.string(), arenaType: t.string() },
-  (ctx, { name, arenaType }) => {
+  { name: t.string(), arenaType: t.string(), minEventBetAmount: t.option(t.f64()) },
+  (ctx, { name, arenaType, minEventBetAmount }) => {
     const tournamentId = ctx.db.tournament.insert({
       id: 0, name, arenaType, status: 'UPCOMING', currentHour: 0,
       gridWidth: 12, gridHeight: 12, prizePool: 0,
-      hostIdentity: ctx.sender, createdAt: ctx.timestamp,
+      hostIdentity: ctx.sender, minEventBetAmount: minEventBetAmount ?? 5.0, createdAt: ctx.timestamp,
     }).id;
     notifyAllUsers(ctx, 'TOURNAMENT', 'New Tournament Announced',
       `"${name}" is opening in the ${arenaType}. Place your bets!`, tournamentId, ctx.sender);
@@ -575,6 +653,15 @@ export const advanceHour = spacetimedb.reducer(
     const alive = allTf.filter((tf: any) => tf.isAlive);
     if (alive.length <= 1 || hour >= MAX_TOURNAMENT_HOURS) { endTournament(ctx, tournament, alive, hour); return; }
 
+    const openSlips = [...ctx.db.eventBetSlip.iter()].filter((s: any) => 
+      Number(s.tournamentId) === Number(tournamentId) && s.status === 'OPEN'
+    );
+    for (const s of openSlips) {
+      if (hour > Number(s.startHour) + Number(s.roundsDuration)) {
+        resolveEventBetSlip(ctx, s.id, 'RESOLVED_NO');
+      }
+    }
+
     let parsedDecisions: any[] = [];
     try { parsedDecisions = JSON.parse(decisions); } catch {}
 
@@ -659,6 +746,8 @@ export const advanceHour = spacetimedb.reducer(
             if (attWins) {
               ctx.db.tournamentFighter.id.update({ ...target, isAlive: false, eliminatedHour: hour });
               newTf.kills++;
+              checkEventBets(ctx, tournamentId, hour, 'KILLS', Number(tf.fighterId), Number(target.fighterId));
+              checkEventBets(ctx, tournamentId, hour, 'DIES', Number(target.fighterId), Number(tf.fighterId));
               ctx.db.liveEvent.insert({
                 id: 0, tournamentId, hour, eventType: 'COMBAT',
                 description: `${fighter.name} eliminates ${defFighter.name}${attHasWeapon ? ' (armed)' : ''}`,
@@ -689,6 +778,7 @@ export const advanceHour = spacetimedb.reducer(
                 tAlliances.push(Number(tf.fighterId));
                 ctx.db.tournamentFighter.id.update({ ...target, alliances: JSON.stringify(tAlliances) });
               }
+              checkEventBets(ctx, tournamentId, hour, 'ALLIES_WITH', Number(tf.fighterId), targetId);
             }
             ctx.db.liveEvent.insert({
               id: 0, tournamentId, hour, eventType: 'ALLIANCE',
@@ -732,6 +822,7 @@ export const advanceHour = spacetimedb.reducer(
       }
       if (Number(newTf.hunger) >= 100 || Number(newTf.thirst) >= 100 || Number(newTf.injury) >= 100) {
         newTf.isAlive = false; newTf.eliminatedHour = hour;
+        checkEventBets(ctx, tournamentId, hour, 'DIES', Number(tf.fighterId), 0);
         const cause = Number(newTf.hunger) >= 100 ? 'starvation' : Number(newTf.thirst) >= 100 ? 'dehydration' : 'injuries';
         ctx.db.liveEvent.insert({
           id: 0, tournamentId, hour, eventType: 'ELIMINATION',
@@ -761,7 +852,7 @@ export const placeBet = spacetimedb.reducer(
     const tournament = [...ctx.db.tournament.iter()].find((t: any) => t.status === 'UPCOMING');
     if (!tournament) throw new SenderError('No upcoming tournament');
     const oddsMap: Record<string, number> = {
-      WIN: 9.0, DIES_FIRST: 22.0, SURVIVES_DAY_1: 1.8, MOST_KILLS: 6.0, FORMS_ALLIANCE: 2.1,
+      WIN: 12.4, DIES_FIRST: 22.0, SURVIVES_ROUND_1: 1.4, KILLS_3_PLUS: 5.0, FORMS_ALLIANCE: 2.1,
     };
     const odds = oddsMap[betType] ?? 2.0;
     ctx.db.user.identity.update({ ...user, balance: user.balance - amount });
@@ -823,7 +914,7 @@ export const createFighter = spacetimedb.reducer(
 
 export const hostTournament = spacetimedb.reducer(
   { name: 'hostTournament' },
-  { name: t.string(), arenaType: t.string() },
+  { name: t.string(), arenaType: t.string(), minEventBetAmount: t.option(t.f64()) },
   (ctx, args) => {
     const user = ctx.db.user.identity.find(ctx.sender);
     if (!user) throw new SenderError('Not registered');
@@ -831,7 +922,7 @@ export const hostTournament = spacetimedb.reducer(
     if (user.balance < 1000)     throw new SenderError('Need $1000 to host');
     ctx.db.user.identity.update({ ...user, balance: user.balance - 1000, tournamentsHosted: user.tournamentsHosted + 1 });
     const tournamentId = ctx.db.tournament.insert({
-      id: 0, ...args, status: 'UPCOMING', currentHour: 0,
+      id: 0, ...args, minEventBetAmount: args.minEventBetAmount ?? 5.0, status: 'UPCOMING', currentHour: 0,
       gridWidth: 12, gridHeight: 12, prizePool: 0,
       hostIdentity: ctx.sender, createdAt: ctx.timestamp,
     }).id;
@@ -848,6 +939,53 @@ export const placeBid = spacetimedb.reducer(
     if (!user) throw new SenderError('Not registered');
     if (user.balance < amount) throw new SenderError('Insufficient funds');
     ctx.db.auctionBid.insert({ id: 0, fighterId, bidderId: ctx.sender, amount, placedAt: ctx.timestamp });
+  }
+);
+
+export const createEventBetSlip = spacetimedb.reducer(
+  { name: 'createEventBetSlip' },
+  { tournamentId: t.u32(), fighter1Id: t.u32(), action: t.string(), fighter2Id: t.u32(), roundsDuration: t.u32(), side: t.string(), amount: t.f64() },
+  (ctx, { tournamentId, fighter1Id, action, fighter2Id, roundsDuration, side, amount }) => {
+    const user = ctx.db.user.identity.find(ctx.sender);
+    if (!user) throw new SenderError('Not registered');
+    const tournament = ctx.db.tournament.id.find(tournamentId);
+    if (!tournament || (tournament.status !== 'LIVE' && tournament.status !== 'UPCOMING')) {
+      throw new SenderError('Tournament is not active');
+    }
+    if (amount < Number(tournament.minEventBetAmount)) throw new SenderError('Amount below minimum bet');
+    if (user.balance < amount) throw new SenderError('Insufficient funds');
+    
+    ctx.db.user.identity.update({ ...user, balance: user.balance - amount });
+    
+    const slipId = ctx.db.eventBetSlip.insert({
+      id: 0, tournamentId, creatorId: ctx.sender, fighter1Id, action, fighter2Id,
+      roundsDuration, startHour: tournament.currentHour, status: 'OPEN', createdAt: ctx.timestamp,
+    }).id;
+    
+    ctx.db.eventBetPosition.insert({
+      id: 0, slipId, userId: ctx.sender, side, amount, placedAt: ctx.timestamp,
+    });
+  }
+);
+
+export const joinEventBetSlip = spacetimedb.reducer(
+  { name: 'joinEventBetSlip' },
+  { slipId: t.u32(), side: t.string(), amount: t.f64() },
+  (ctx, { slipId, side, amount }) => {
+    const user = ctx.db.user.identity.find(ctx.sender);
+    if (!user) throw new SenderError('Not registered');
+    
+    const slip = ctx.db.eventBetSlip.id.find(slipId);
+    if (!slip || slip.status !== 'OPEN') throw new SenderError('Slip is not open');
+    
+    if (amount <= 0) throw new SenderError('Invalid amount');
+    if (user.balance < amount) throw new SenderError('Insufficient funds');
+    
+    ctx.db.user.identity.update({ ...user, balance: user.balance - amount });
+    
+    ctx.db.eventBetPosition.insert({
+      id: 0, slipId, userId: ctx.sender, side, amount, placedAt: ctx.timestamp,
+    });
   }
 );
 // ─── PROFILE & SOCIAL ─────────────────────────────────────────────────────────

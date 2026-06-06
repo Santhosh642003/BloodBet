@@ -19,4 +19,7 @@ export default __t.row({
   tournamentsHosted: __t.u32().name("tournaments_hosted"),
   fightersOwned: __t.u32().name("fighters_owned"),
   createdAt: __t.timestamp().name("created_at"),
+  bio: __t.string(),
+  avatarEmoji: __t.string().name("avatar_emoji"),
+  favoriteArchetype: __t.string().name("favorite_archetype"),
 });

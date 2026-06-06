@@ -12,14 +12,13 @@ import {
 
 export default __t.row({
   id: __t.u32().primaryKey(),
-  name: __t.string(),
-  arenaType: __t.string().name("arena_type"),
+  tournamentId: __t.u32().name("tournament_id"),
+  creatorId: __t.identity().name("creator_id"),
+  fighter1Id: __t.u32().name("fighter_1_id"),
+  action: __t.string(),
+  fighter2Id: __t.u32().name("fighter_2_id"),
+  roundsDuration: __t.u32().name("rounds_duration"),
+  startHour: __t.u32().name("start_hour"),
   status: __t.string(),
-  currentHour: __t.u32().name("current_hour"),
-  gridWidth: __t.u8().name("grid_width"),
-  gridHeight: __t.u8().name("grid_height"),
-  prizePool: __t.f64().name("prize_pool"),
-  hostIdentity: __t.option(__t.identity()).name("host_identity"),
-  minEventBetAmount: __t.f64().name("min_event_bet_amount"),
   createdAt: __t.timestamp().name("created_at"),
 });

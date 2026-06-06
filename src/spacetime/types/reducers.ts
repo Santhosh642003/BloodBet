@@ -7,24 +7,42 @@ import { type Infer as __Infer } from "spacetimedb";
 
 // Import all reducer arg schemas
 import AdvanceHourReducer from "../advance_hour_reducer";
+import CreateEventBetSlipReducer from "../create_event_bet_slip_reducer";
 import CreateFighterReducer from "../create_fighter_reducer";
 import CreateTournamentReducer from "../create_tournament_reducer";
 import HostTournamentReducer from "../host_tournament_reducer";
+import JoinEventBetSlipReducer from "../join_event_bet_slip_reducer";
+import MarkAllNotificationsReadReducer from "../mark_all_notifications_read_reducer";
+import MarkNotificationReadReducer from "../mark_notification_read_reducer";
 import PlaceBetReducer from "../place_bet_reducer";
 import PlaceBidReducer from "../place_bid_reducer";
 import RegisterUserReducer from "../register_user_reducer";
+import RemoveFriendReducer from "../remove_friend_reducer";
+import RespondToFriendRequestReducer from "../respond_to_friend_request_reducer";
+import SendFriendRequestReducer from "../send_friend_request_reducer";
 import SponsorFighterReducer from "../sponsor_fighter_reducer";
 import StartTournamentReducer from "../start_tournament_reducer";
+import UpdateAccountReducer from "../update_account_reducer";
+import UpdateProfileReducer from "../update_profile_reducer";
 import VerifyLoginReducer from "../verify_login_reducer";
 
 export type AdvanceHourParams = __Infer<typeof AdvanceHourReducer>;
+export type CreateEventBetSlipParams = __Infer<typeof CreateEventBetSlipReducer>;
 export type CreateFighterParams = __Infer<typeof CreateFighterReducer>;
 export type CreateTournamentParams = __Infer<typeof CreateTournamentReducer>;
 export type HostTournamentParams = __Infer<typeof HostTournamentReducer>;
+export type JoinEventBetSlipParams = __Infer<typeof JoinEventBetSlipReducer>;
+export type MarkAllNotificationsReadParams = __Infer<typeof MarkAllNotificationsReadReducer>;
+export type MarkNotificationReadParams = __Infer<typeof MarkNotificationReadReducer>;
 export type PlaceBetParams = __Infer<typeof PlaceBetReducer>;
 export type PlaceBidParams = __Infer<typeof PlaceBidReducer>;
 export type RegisterUserParams = __Infer<typeof RegisterUserReducer>;
+export type RemoveFriendParams = __Infer<typeof RemoveFriendReducer>;
+export type RespondToFriendRequestParams = __Infer<typeof RespondToFriendRequestReducer>;
+export type SendFriendRequestParams = __Infer<typeof SendFriendRequestReducer>;
 export type SponsorFighterParams = __Infer<typeof SponsorFighterReducer>;
 export type StartTournamentParams = __Infer<typeof StartTournamentReducer>;
+export type UpdateAccountParams = __Infer<typeof UpdateAccountReducer>;
+export type UpdateProfileParams = __Infer<typeof UpdateProfileReducer>;
 export type VerifyLoginParams = __Infer<typeof VerifyLoginReducer>;
 

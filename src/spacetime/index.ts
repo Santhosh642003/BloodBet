@@ -35,14 +35,23 @@ import {
 
 // Import all reducer arg schemas
 import AdvanceHourReducer from "./advance_hour_reducer";
+import CreateEventBetSlipReducer from "./create_event_bet_slip_reducer";
 import CreateFighterReducer from "./create_fighter_reducer";
 import CreateTournamentReducer from "./create_tournament_reducer";
 import HostTournamentReducer from "./host_tournament_reducer";
+import JoinEventBetSlipReducer from "./join_event_bet_slip_reducer";
+import MarkAllNotificationsReadReducer from "./mark_all_notifications_read_reducer";
+import MarkNotificationReadReducer from "./mark_notification_read_reducer";
 import PlaceBetReducer from "./place_bet_reducer";
 import PlaceBidReducer from "./place_bid_reducer";
 import RegisterUserReducer from "./register_user_reducer";
+import RemoveFriendReducer from "./remove_friend_reducer";
+import RespondToFriendRequestReducer from "./respond_to_friend_request_reducer";
+import SendFriendRequestReducer from "./send_friend_request_reducer";
 import SponsorFighterReducer from "./sponsor_fighter_reducer";
 import StartTournamentReducer from "./start_tournament_reducer";
+import UpdateAccountReducer from "./update_account_reducer";
+import UpdateProfileReducer from "./update_profile_reducer";
 import VerifyLoginReducer from "./verify_login_reducer";
 
 // Import all procedure arg schemas
@@ -52,8 +61,12 @@ import ArenaTileRow from "./arena_tile_table";
 import AuctionBidRow from "./auction_bid_table";
 import BetRow from "./bet_table";
 import ContractRow from "./contract_table";
+import EventBetPositionRow from "./event_bet_position_table";
+import EventBetSlipRow from "./event_bet_slip_table";
 import FighterTemplateRow from "./fighter_template_table";
+import FriendshipRow from "./friendship_table";
 import LiveEventRow from "./live_event_table";
+import NotificationRow from "./notification_table";
 import SponsorDropRow from "./sponsor_drop_table";
 import TournamentRow from "./tournament_table";
 import TournamentFighterRow from "./tournament_fighter_table";
@@ -122,6 +135,34 @@ const tablesSchema = __schema({
       { name: 'contract_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, ContractRow),
+  eventBetPosition: __table({
+    name: 'eventBetPosition',
+    indexes: [
+      { accessor: 'id', name: 'eventBetPosition_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'slipId', name: 'eventBetPosition_slip_id_idx_btree', algorithm: 'btree', columns: [
+        'slipId',
+      ] },
+    ],
+    constraints: [
+      { name: 'eventBetPosition_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, EventBetPositionRow),
+  eventBetSlip: __table({
+    name: 'eventBetSlip',
+    indexes: [
+      { accessor: 'id', name: 'eventBetSlip_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'tournamentId', name: 'eventBetSlip_tournament_id_idx_btree', algorithm: 'btree', columns: [
+        'tournamentId',
+      ] },
+    ],
+    constraints: [
+      { name: 'eventBetSlip_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, EventBetSlipRow),
   fighterTemplate: __table({
     name: 'fighterTemplate',
     indexes: [
@@ -133,6 +174,27 @@ const tablesSchema = __schema({
       { name: 'fighterTemplate_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, FighterTemplateRow),
+  friendship: __table({
+    name: 'friendship',
+    indexes: [
+      { accessor: 'addresseeId', name: 'friendship_addressee_id_idx_btree', algorithm: 'btree', columns: [
+        'addresseeId',
+      ] },
+      { accessor: 'id', name: 'friendship_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'by_pair', name: 'friendship_requester_id_addressee_id_idx_btree', algorithm: 'btree', columns: [
+        'requesterId',
+        'addresseeId',
+      ] },
+      { accessor: 'requesterId', name: 'friendship_requester_id_idx_btree', algorithm: 'btree', columns: [
+        'requesterId',
+      ] },
+    ],
+    constraints: [
+      { name: 'friendship_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, FriendshipRow),
   liveEvent: __table({
     name: 'liveEvent',
     indexes: [
@@ -147,6 +209,24 @@ const tablesSchema = __schema({
       { name: 'liveEvent_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, LiveEventRow),
+  notification: __table({
+    name: 'notification',
+    indexes: [
+      { accessor: 'id', name: 'notification_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'by_recipient', name: 'notification_recipient_id_created_at_idx_btree', algorithm: 'btree', columns: [
+        'recipientId',
+        'createdAt',
+      ] },
+      { accessor: 'recipientId', name: 'notification_recipient_id_idx_btree', algorithm: 'btree', columns: [
+        'recipientId',
+      ] },
+    ],
+    constraints: [
+      { name: 'notification_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, NotificationRow),
   sponsorDrop: __table({
     name: 'sponsorDrop',
     indexes: [
@@ -205,14 +285,23 @@ const tablesSchema = __schema({
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
   __reducerSchema("advanceHour", AdvanceHourReducer),
+  __reducerSchema("createEventBetSlip", CreateEventBetSlipReducer),
   __reducerSchema("createFighter", CreateFighterReducer),
   __reducerSchema("createTournament", CreateTournamentReducer),
   __reducerSchema("hostTournament", HostTournamentReducer),
+  __reducerSchema("joinEventBetSlip", JoinEventBetSlipReducer),
+  __reducerSchema("markAllNotificationsRead", MarkAllNotificationsReadReducer),
+  __reducerSchema("markNotificationRead", MarkNotificationReadReducer),
   __reducerSchema("placeBet", PlaceBetReducer),
   __reducerSchema("placeBid", PlaceBidReducer),
   __reducerSchema("registerUser", RegisterUserReducer),
+  __reducerSchema("removeFriend", RemoveFriendReducer),
+  __reducerSchema("respondToFriendRequest", RespondToFriendRequestReducer),
+  __reducerSchema("sendFriendRequest", SendFriendRequestReducer),
   __reducerSchema("sponsorFighter", SponsorFighterReducer),
   __reducerSchema("startTournament", StartTournamentReducer),
+  __reducerSchema("updateAccount", UpdateAccountReducer),
+  __reducerSchema("updateProfile", UpdateProfileReducer),
   __reducerSchema("verifyLogin", VerifyLoginReducer),
 );
 

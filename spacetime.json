@@ -2,7 +2,6 @@
   "dev": {
     "run": "pnpm run dev"
   },
-  "module-path": "./spacetimedb",
   "server": "maincloud",
-  "database": "bloodbet-dre-dev"
+  "module-path": "server/bloodbath/spacetimedb"
 }
