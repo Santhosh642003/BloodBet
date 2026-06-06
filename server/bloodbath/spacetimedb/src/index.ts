@@ -1,4 +1,4 @@
-import { schema, table, t } from 'spacetimedb/server';
+import { schema, table, t, SenderError } from 'spacetimedb/server';
 
 // ─── TABLES ───────────────────────────────────────────────────────────────────
 
@@ -341,9 +341,9 @@ export const registerUser = spacetimedb.reducer(
   (ctx, { username, email, passwordHash }) => {
     // Only check username/email uniqueness — not identity
     const takenUser  = [...ctx.db.user.iter()].find((u: any) => u.username === username);
-    if (takenUser) throw new Error('Username already taken');
+    if (takenUser) throw new SenderError('Username already taken');
     const takenEmail = [...ctx.db.user.iter()].find((u: any) => u.email === email);
-    if (takenEmail) throw new Error('Email already registered');
+    if (takenEmail) throw new SenderError('Email already registered');
 
     // If this identity already has an account, update it instead
     const existing = ctx.db.user.identity.find(ctx.sender);
@@ -370,8 +370,8 @@ export const verifyLogin = spacetimedb.reducer(
     const user = [...ctx.db.user.iter()].find((u: any) =>
       u.username === usernameOrEmail || u.email === usernameOrEmail
     );
-    if (!user) throw new Error('Account not found');
-    if (user.passwordHash !== passwordHash) throw new Error('Incorrect password');
+    if (!user) throw new SenderError('Account not found');
+    if (user.passwordHash !== passwordHash) throw new SenderError('Incorrect password');
 
     // Already logged in with this identity — nothing to do
     if (user.identity.toHexString() === ctx.sender.toHexString()) return;
@@ -411,7 +411,7 @@ export const startTournament = spacetimedb.reducer(
   {},
   (ctx, _args) => {
     const tournament = [...ctx.db.tournament.iter()].find((t: any) => t.status === 'UPCOMING');
-    if (!tournament) throw new Error('No upcoming tournament');
+    if (!tournament) throw new SenderError('No upcoming tournament');
     const W = Number(tournament.gridWidth);
     const H = Number(tournament.gridHeight);
     const terrainTypes = ['PLAIN','PLAIN','PLAIN','FOREST','FOREST','WATER','RUINS','SHELTER','DANGER'];
@@ -649,10 +649,10 @@ export const placeBet = spacetimedb.reducer(
   { fighterId: t.u32(), betType: t.string(), amount: t.f64() },
   (ctx, { fighterId, betType, amount }) => {
     const user = ctx.db.user.identity.find(ctx.sender);
-    if (!user) throw new Error('Not registered');
-    if (user.balance < amount) throw new Error('Insufficient funds');
+    if (!user) throw new SenderError('Not registered');
+    if (user.balance < amount) throw new SenderError('Insufficient funds');
     const tournament = [...ctx.db.tournament.iter()].find((t: any) => t.status === 'UPCOMING');
-    if (!tournament) throw new Error('No upcoming tournament');
+    if (!tournament) throw new SenderError('No upcoming tournament');
     const oddsMap: Record<string, number> = {
       WIN: 9.0, DIES_FIRST: 22.0, SURVIVES_DAY_1: 1.8, MOST_KILLS: 6.0, FORMS_ALLIANCE: 2.1,
     };
@@ -671,27 +671,27 @@ export const sponsorFighter = spacetimedb.reducer(
   { fighterId: t.u32(), itemType: t.string() },
   (ctx, { fighterId, itemType }) => {
     const user = ctx.db.user.identity.find(ctx.sender);
-    if (!user) throw new Error('Not registered');
+    if (!user) throw new SenderError('Not registered');
     const costMap: Record<string, number> = {
       FOOD: 50, WATER: 50, MEDKIT: 150, SMOKE_BOMB: 175, WEAPON: 400, INTEL: 250,
     };
     const cost = costMap[itemType];
-    if (!cost) throw new Error('Invalid item type');
-    if (user.balance < cost) throw new Error('Insufficient funds');
+    if (!cost) throw new SenderError('Invalid item type');
+    if (user.balance < cost) throw new SenderError('Insufficient funds');
     const tournament = [...ctx.db.tournament.iter()].find((t: any) => t.status === 'LIVE');
-    if (!tournament) throw new Error('No live tournament');
+    if (!tournament) throw new SenderError('No live tournament');
     const hasBet = [...ctx.db.bet.iter()].some((b: any) =>
       b.userId.toHexString() === ctx.sender.toHexString() &&
       Number(b.tournamentId) === Number(tournament.id) &&
       Number(b.fighterId) === Number(fighterId) && b.status === 'PENDING'
     );
-    if (!hasBet) throw new Error('You must have an active bet on this fighter to sponsor them');
+    if (!hasBet) throw new SenderError('You must have an active bet on this fighter to sponsor them');
     const recentDrops = [...ctx.db.sponsorDrop.iter()].filter((d: any) =>
       Number(d.tournamentId) === Number(tournament.id) &&
       Number(d.fighterId) === Number(fighterId) &&
       Number(d.queuedHour) + 3 > Number(tournament.currentHour)
     );
-    if (recentDrops.length > 0) throw new Error('Sponsorship on cooldown (3 hour cooldown)');
+    if (recentDrops.length > 0) throw new SenderError('Sponsorship on cooldown (3 hour cooldown)');
     ctx.db.user.identity.update({ ...user, balance: user.balance - cost });
     ctx.db.sponsorDrop.insert({
       id: 0, tournamentId: tournament.id, userId: ctx.sender,
@@ -707,8 +707,8 @@ export const createFighter = spacetimedb.reducer(
   { name: t.string(), lore: t.string(), archetype: t.string(), strength: t.u8(), speed: t.u8(), intelligence: t.u8(), luck: t.u8(), charisma: t.u8() },
   (ctx, args) => {
     const user = ctx.db.user.identity.find(ctx.sender);
-    if (!user) throw new Error('Not registered');
-    if (user.balance < 500) throw new Error('Need $500 to create a fighter');
+    if (!user) throw new SenderError('Not registered');
+    if (user.balance < 500) throw new SenderError('Need $500 to create a fighter');
     ctx.db.user.identity.update({ ...user, balance: user.balance - 500, fightersOwned: user.fightersOwned + 1 });
     ctx.db.fighterTemplate.insert({ id: 0, ...args, wins: 0, tournamentsPlayed: 0, isUserCreated: true, ownerIdentity: ctx.sender });
   }
@@ -719,9 +719,9 @@ export const hostTournament = spacetimedb.reducer(
   { name: t.string(), arenaType: t.string() },
   (ctx, args) => {
     const user = ctx.db.user.identity.find(ctx.sender);
-    if (!user) throw new Error('Not registered');
-    if (user.fightersOwned < 10) throw new Error('Need 10 fighters to host');
-    if (user.balance < 1000)     throw new Error('Need $1000 to host');
+    if (!user) throw new SenderError('Not registered');
+    if (user.fightersOwned < 10) throw new SenderError('Need 10 fighters to host');
+    if (user.balance < 1000)     throw new SenderError('Need $1000 to host');
     ctx.db.user.identity.update({ ...user, balance: user.balance - 1000, tournamentsHosted: user.tournamentsHosted + 1 });
     ctx.db.tournament.insert({
       id: 0, ...args, status: 'UPCOMING', currentHour: 0,
@@ -736,8 +736,8 @@ export const placeBid = spacetimedb.reducer(
   { fighterId: t.u32(), amount: t.f64() },
   (ctx, { fighterId, amount }) => {
     const user = ctx.db.user.identity.find(ctx.sender);
-    if (!user) throw new Error('Not registered');
-    if (user.balance < amount) throw new Error('Insufficient funds');
+    if (!user) throw new SenderError('Not registered');
+    if (user.balance < amount) throw new SenderError('Insufficient funds');
     ctx.db.auctionBid.insert({ id: 0, fighterId, bidderId: ctx.sender, amount, placedAt: ctx.timestamp });
   }
 );
@@ -748,8 +748,8 @@ export const updateProfile = spacetimedb.reducer(
   { bio: t.string(), avatarEmoji: t.string(), favoriteArchetype: t.string() },
   (ctx, { bio, avatarEmoji, favoriteArchetype }) => {
     const user = ctx.db.user.identity.find(ctx.sender);
-    if (!user) throw new Error('Not registered');
-    if (bio.length > 280) throw new Error('Bio is too long (max 280 characters)');
+    if (!user) throw new SenderError('Not registered');
+    if (bio.length > 280) throw new SenderError('Bio is too long (max 280 characters)');
     ctx.db.user.identity.update({ ...user, bio, avatarEmoji, favoriteArchetype });
   }
 );
@@ -759,18 +759,18 @@ export const sendFriendRequest = spacetimedb.reducer(
   { addresseeId: t.identity() },
   (ctx, { addresseeId }) => {
     const me = ctx.db.user.identity.find(ctx.sender);
-    if (!me) throw new Error('Not registered');
+    if (!me) throw new SenderError('Not registered');
     if (ctx.sender.isEqual ? ctx.sender.isEqual(addresseeId) : ctx.sender.toHexString() === addresseeId.toHexString()) {
-      throw new Error('You cannot friend yourself');
+      throw new SenderError('You cannot friend yourself');
     }
     const target = ctx.db.user.identity.find(addresseeId);
-    if (!target) throw new Error('Player not found');
+    if (!target) throw new SenderError('Player not found');
 
     const existing = [...ctx.db.friendship.iter()].find((f: any) =>
       (f.requesterId.toHexString() === ctx.sender.toHexString() && f.addresseeId.toHexString() === addresseeId.toHexString()) ||
       (f.requesterId.toHexString() === addresseeId.toHexString() && f.addresseeId.toHexString() === ctx.sender.toHexString())
     );
-    if (existing) throw new Error('A friend request already exists with this player');
+    if (existing) throw new SenderError('A friend request already exists with this player');
 
     ctx.db.friendship.insert({
       id: 0, requesterId: ctx.sender, addresseeId, status: 'PENDING', createdAt: ctx.timestamp,
@@ -783,9 +783,9 @@ export const respondToFriendRequest = spacetimedb.reducer(
   { friendshipId: t.u32(), accept: t.bool() },
   (ctx, { friendshipId, accept }) => {
     const fr = ctx.db.friendship.id.find(friendshipId);
-    if (!fr) throw new Error('Friend request not found');
-    if (fr.addresseeId.toHexString() !== ctx.sender.toHexString()) throw new Error('Not your request to respond to');
-    if (fr.status !== 'PENDING') throw new Error('Request already resolved');
+    if (!fr) throw new SenderError('Friend request not found');
+    if (fr.addresseeId.toHexString() !== ctx.sender.toHexString()) throw new SenderError('Not your request to respond to');
+    if (fr.status !== 'PENDING') throw new SenderError('Request already resolved');
 
     if (accept) ctx.db.friendship.id.update({ ...fr, status: 'ACCEPTED' });
     else        ctx.db.friendship.id.delete(friendshipId);
@@ -797,9 +797,9 @@ export const removeFriend = spacetimedb.reducer(
   { friendshipId: t.u32() },
   (ctx, { friendshipId }) => {
     const fr = ctx.db.friendship.id.find(friendshipId);
-    if (!fr) throw new Error('Friendship not found');
+    if (!fr) throw new SenderError('Friendship not found');
     const mine = fr.requesterId.toHexString() === ctx.sender.toHexString() || fr.addresseeId.toHexString() === ctx.sender.toHexString();
-    if (!mine) throw new Error('Not your friendship to remove');
+    if (!mine) throw new SenderError('Not your friendship to remove');
     ctx.db.friendship.id.delete(friendshipId);
   }
 );
@@ -809,12 +809,12 @@ export const updateAccount = spacetimedb.reducer(
   { username: t.string() },
   (ctx, { username }) => {
     const me = ctx.db.user.identity.find(ctx.sender);
-    if (!me) throw new Error('Not registered');
+    if (!me) throw new SenderError('Not registered');
     const trimmed = username.trim();
-    if (trimmed.length < 3 || trimmed.length > 24) throw new Error('Username must be 3-24 characters');
+    if (trimmed.length < 3 || trimmed.length > 24) throw new SenderError('Username must be 3-24 characters');
     if (trimmed !== me.username) {
       const taken = [...ctx.db.user.iter()].find((u: any) => u.username === trimmed && u.identity.toHexString() !== ctx.sender.toHexString());
-      if (taken) throw new Error('Username already taken');
+      if (taken) throw new SenderError('Username already taken');
     }
     ctx.db.user.identity.update({ ...me, username: trimmed });
   }
