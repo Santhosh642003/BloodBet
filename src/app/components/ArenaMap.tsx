@@ -513,17 +513,6 @@ export const ArenaMap = forwardRef<ArenaMapHandle, ArenaMapProps>(function Arena
     scene.add(terrain);
     terrainMRef.current = terrain;
 
-    // ── Water plane
-    const wY = waterLevel * def.heightMult - 0.1;
-    const wGeo = new THREE.PlaneGeometry(WORLD_SZ * 1.3, WORLD_SZ * 1.3, 1, 1);
-    wGeo.rotateX(-Math.PI / 2);
-    const wCol = biome === 'volcanic' ? 0x600808 : biome === 'island' ? 0x1a5090 : 0x1a3870;
-    const wMat = new THREE.MeshStandardMaterial({
-      color: wCol, transparent: true, opacity: 0.75, roughness: 0.05, metalness: 0.4,
-    });
-    const water = new THREE.Mesh(wGeo, wMat);
-    water.position.y = wY; water.name = 'water';
-    scene.add(water);
 
     // ── Grid lines (12×12) traced on terrain surface
     {
@@ -629,10 +618,6 @@ export const ArenaMap = forwardRef<ArenaMapHandle, ArenaMapProps>(function Arena
         for (const [, pin] of pinsRef.current) {
           pin.position.y += Math.sin(frame * 0.04 + pin.position.x) * 0.003;
         }
-      }
-      // Water shimmer
-      if (frame % 3 === 0) {
-        (wMat as THREE.MeshStandardMaterial).opacity = 0.70 + Math.sin(frame * 0.03) * 0.05;
       }
       renderer.render(scene, camera);
     };
