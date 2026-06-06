@@ -57,9 +57,7 @@ export function useSpacetime() {
             setAuctionBids(normalizeAll(ctx.db.auctionBid.iter()));
             setUsers(normalizeAll(ctx.db.user.iter()));
 
-            // Auto-login: find user for this identity, or grab first available
-            const me = ctx.db.user.identity.find(id)
-              ?? [...ctx.db.user.iter()][0];
+            const me = ctx.db.user.identity.find(id);
             if (me) setCurrentUser(normalize(me));
           })
           .subscribe([
@@ -109,11 +107,13 @@ export function useSpacetime() {
   }, []);
 
   const register = useCallback((username: string, email: string, passwordHash: string) => {
-    conn?.reducers.registerUser(username, email, passwordHash);
+    if (!conn) return Promise.reject(new Error('Not connected to the arena yet'));
+    return conn.reducers.registerUser(username, email, passwordHash);
   }, [conn]);
 
   const verifyLogin = useCallback((usernameOrEmail: string, passwordHash: string) => {
-    conn?.reducers.verifyLogin(usernameOrEmail, passwordHash);
+    if (!conn) return Promise.reject(new Error('Not connected to the arena yet'));
+    return conn.reducers.verifyLogin(usernameOrEmail, passwordHash);
   }, [conn]);
 
   const placeBet = useCallback((fighterId: number, betType: string, amount: number) => {

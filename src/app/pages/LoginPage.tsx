@@ -6,6 +6,12 @@ import { Eye, EyeOff } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { useDB } from '../context/SpacetimeContext';
 
+async function hashPassword(password: string): Promise<string> {
+  const data = new TextEncoder().encode(password);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 export function LoginPage() {
   const [isSignup, setIsSignup]         = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -15,13 +21,41 @@ export function LoginPage() {
   const [password, setPassword]         = useState('');
   const [confirmPassword, setConfirm]   = useState('');
   const [agreed, setAgreed]             = useState(false);
+  const [error, setError]               = useState('');
+  const [submitting, setSubmitting]     = useState(false);
 
   const navigate = useNavigate();
-  const { connected } = useDB();
+  const { connected, register, verifyLogin } = useDB();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    navigate('/dashboard');
+    setError('');
+
+    if (isSignup) {
+      if (username.trim().length < 3) return setError('Username must be at least 3 characters');
+      if (!email.trim()) return setError('Email is required');
+      if (password.length < 6) return setError('Password must be at least 6 characters');
+      if (password !== confirmPassword) return setError('Passwords do not match');
+      if (!agreed) return setError('You must accept the Arena Terms & Survival Policy');
+    } else {
+      if (!loginInput.trim()) return setError('Username or email is required');
+      if (!password) return setError('Password is required');
+    }
+
+    setSubmitting(true);
+    try {
+      const passwordHash = await hashPassword(password);
+      if (isSignup) {
+        await register(username.trim(), email.trim(), passwordHash);
+      } else {
+        await verifyLogin(loginInput.trim(), passwordHash);
+      }
+      navigate('/dashboard');
+    } catch (err: any) {
+      setError(err?.message ?? 'Something went wrong. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -151,8 +185,14 @@ export function LoginPage() {
               </>
             )}
 
-            <Button type="submit" className="w-full">
-              {isSignup ? 'JOIN THE BLOODBETS' : 'ENTER THE ARENA'}
+            {error && (
+              <div className="bg-red-950/40 border border-red-500 text-red-400 font-mono text-xs px-4 py-3">
+                {error}
+              </div>
+            )}
+
+            <Button type="submit" className="w-full" disabled={submitting || !connected}>
+              {submitting ? 'PLEASE WAIT...' : isSignup ? 'JOIN THE BLOODBETS' : 'ENTER THE ARENA'}
             </Button>
 
             <div className="flex items-center gap-4">
