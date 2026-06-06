@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { CharacterCard } from '../components/CharacterCard';
 import { Button } from '../components/Button';
 import { NavBar } from '../components/NavBar';
@@ -23,10 +23,35 @@ const EVENT_ICONS: Record<string, string> = {
   TRAP:     '⚠️',
 };
 
+const BETTING_WINDOW_MS = 2 * 60 * 1000;
+
+function timestampToMs(ts: any): number {
+  const micros = ts?.microsSinceUnixEpoch;
+  return micros !== undefined ? Number(micros) / 1000 : 0;
+}
+
+function formatCountdown(ms: number): string {
+  if (ms <= 0) return '00:00';
+  const totalSeconds = Math.floor(ms / 1000);
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function useCountdown(targetMs: number | null): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (targetMs === null) return;
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, [targetMs]);
+  return targetMs === null ? 0 : Math.max(0, targetMs - now);
+}
+
 export function TournamentPage() {
   const navigate   = useNavigate();
   const {
-    currentUser, tournaments, fighters, bets, liveEvents,
+    currentUser, tournaments, fighters, tournamentFighters, bets, liveEvents,
     placeBet, identity,
   } = useDB();
 
@@ -41,16 +66,30 @@ export function TournamentPage() {
   const upcomingTournament = tournaments.find(t => t.status === 'UPCOMING');
   const activeTournament   = liveTournament ?? upcomingTournament;
 
-  // Fighters in this tournament
-  const tournamentFighterIds = activeTournament
-    ? fighters.map(f => Number(f.id)) // all fighters visible; server picks 20
+  // Countdown to betting close / tournament start (UPCOMING tournaments only)
+  const countdownTarget = activeTournament?.status === 'UPCOMING'
+    ? timestampToMs(activeTournament.createdAt) + BETTING_WINDOW_MS
+    : null;
+  const countdownMs = useCountdown(countdownTarget);
+
+  // Roster entries actually participating in this tournament (joined w/ live state)
+  const rosterEntries = activeTournament
+    ? tournamentFighters
+        .filter(tf => Number(tf.tournamentId) === Number(activeTournament.id))
+        .map(tf => ({
+          tf,
+          fighter: fighters.find(f => Number(f.id) === Number(tf.fighterId)) ?? null,
+        }))
+        .filter(entry => entry.fighter !== null)
     : [];
 
-  // For live: only show fighters that are in the tournament
-  // For now show all 50 in lobby, filtered when live
+  // For LIVE tournaments, show only the fighters actually competing.
+  // For UPCOMING (no roster assigned yet), show the full pool to bet on.
   const displayFighters = activeTournament?.status === 'LIVE'
-    ? fighters.slice(0, 20)
-    : fighters;
+    ? rosterEntries
+    : fighters.map(fighter => ({ tf: null as any, fighter }));
+
+  const aliveCount = rosterEntries.filter(e => e.tf.isAlive).length;
 
   // Live events for active tournament
   const filteredEvents  = liveEvents
@@ -116,18 +155,37 @@ export function TournamentPage() {
                 </div>
               </div>
               <div className="flex items-center gap-6">
-                <div className="text-center">
-                  <div className="font-mono text-text-secondary text-xs uppercase mb-1">Round</div>
-                  <div className="font-display text-3xl text-accent-gold">
-                    {activeTournament.currentRound} / {activeTournament.totalRounds}
+                {activeTournament.status === 'LIVE' ? (
+                  <div className="text-center">
+                    <div className="font-mono text-text-secondary text-xs uppercase mb-1">Hour</div>
+                    <div className="font-display text-3xl text-accent-gold">
+                      {Number(activeTournament.currentHour ?? 0)}
+                    </div>
                   </div>
-                </div>
+                ) : activeTournament.status === 'UPCOMING' ? (
+                  <div className="text-center">
+                    <div className="font-mono text-text-secondary text-xs uppercase mb-1 flex items-center gap-1 justify-center">
+                      <Clock className="w-3 h-3" /> Starts In
+                    </div>
+                    <div className="font-display text-3xl text-accent-gold tabular-nums">
+                      {formatCountdown(countdownMs)}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="text-center">
                   <div className="font-mono text-text-secondary text-xs uppercase mb-1">Prize Pool</div>
                   <div className="font-display text-3xl text-success-green">
                     ${Number(activeTournament.prizePool ?? 0).toFixed(2)}
                   </div>
                 </div>
+                {activeTournament.status === 'LIVE' && (
+                  <div className="text-center">
+                    <div className="font-mono text-text-secondary text-xs uppercase mb-1">Alive</div>
+                    <div className="font-display text-3xl text-text-primary">
+                      {aliveCount} / {rosterEntries.length}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -139,9 +197,9 @@ export function TournamentPage() {
                 }`} />
                 <span className="font-heading text-lg text-text-primary">
                   {activeTournament.status === 'LIVE'
-                    ? `ROUND ${activeTournament.currentRound} LIVE`
+                    ? `HOUR ${Number(activeTournament.currentHour ?? 0)} — LIVE`
                     : activeTournament.status === 'UPCOMING'
-                    ? 'BETTING OPEN — STARTS SOON'
+                    ? `BETTING OPEN — STARTS IN ${formatCountdown(countdownMs)}`
                     : 'TOURNAMENT COMPLETE'}
                 </span>
               </div>
@@ -176,39 +234,43 @@ export function TournamentPage() {
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-4">
-              {displayFighters.map((fighter, idx) => (
-                <div
-                  key={idx}
-                  onClick={() => {
-                    setSelectedFighterId(Number(fighter.id));
-                    setBetError('');
-                    setBetSuccess('');
-                  }}
-                  className={`cursor-pointer transition-all ${
-                    selectedFighterId === Number(fighter.id)
-                      ? 'ring-2 ring-accent-gold'
-                      : 'hover:ring-1 hover:ring-accent-gold/50'
-                  }`}
-                >
-                  <CharacterCard
-                    name={fighter.name}
-                    archetype={fighter.archetype}
-                    role={fighter.archetype}
-                    stats={{
-                      str:  fighter.strength,
-                      spd:  fighter.speed,
-                      int:  fighter.intelligence,
-                      luck: fighter.luck,
+              {displayFighters.map(({ tf, fighter }, idx) => {
+                const isDead = tf ? !tf.isAlive : false;
+                return (
+                  <div
+                    key={idx}
+                    onClick={() => {
+                      if (isDead) return;
+                      setSelectedFighterId(Number(fighter.id));
+                      setBetError('');
+                      setBetSuccess('');
                     }}
-                    survivalOdds={70}
-                    winOdds={`${(12.4 / (fighter.wins + 1)).toFixed(1)}x`}
-                    winRate={fighter.tournamentsPlayed > 0
-                      ? Math.round((fighter.wins / fighter.tournamentsPlayed) * 100)
-                      : 0}
-                    onClick={() => {}}
-                  />
-                </div>
-              ))}
+                    className={`transition-all ${
+                      isDead
+                        ? ''
+                        : selectedFighterId === Number(fighter.id)
+                        ? 'ring-2 ring-accent-gold cursor-pointer'
+                        : 'hover:ring-1 hover:ring-accent-gold/50 cursor-pointer'
+                    }`}
+                  >
+                    <CharacterCard
+                      name={fighter.name}
+                      archetype={fighter.archetype}
+                      stats={{
+                        str:  fighter.strength,
+                        spd:  fighter.speed,
+                        int:  fighter.intelligence,
+                        luck: fighter.luck,
+                      }}
+                      survivalOdds={70}
+                      winOdds={`${(12.4 / (fighter.wins + 1)).toFixed(1)}x`}
+                      dead={isDead}
+                      conditionLabel={tf ? tf.condition : undefined}
+                      onClick={() => {}}
+                    />
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -326,13 +388,13 @@ export function TournamentPage() {
               <h3 className="font-heading text-lg text-accent-gold mb-4 uppercase">
                 Live Event Feed
               </h3>
-              {liveEvents.length === 0 ? (
+              {filteredEvents.length === 0 ? (
                 <div className="font-mono text-sm text-text-secondary text-center py-4">
                   Waiting for tournament to start...
                 </div>
               ) : (
                 <div className="space-y-2 font-mono text-sm max-h-96 overflow-y-auto">
-                  {liveEvents.map((event, i) => (
+                  {filteredEvents.map((event, i) => (
                     <motion.div
                       key={i}
                       initial={{ opacity: 0, x: 10 }}
@@ -345,7 +407,7 @@ export function TournamentPage() {
                       }`}
                     >
                       <span className="text-text-secondary text-xs shrink-0">
-                        R{event.round}
+                        H{Number(event.hour ?? 0)}
                       </span>
                       <span>{EVENT_ICONS[event.eventType] ?? '•'}</span>
                       <span className="text-xs leading-relaxed">{event.description}</span>
