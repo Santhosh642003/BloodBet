@@ -174,12 +174,30 @@ const auctionBid = table(
   }
 );
 
+const notification = table(
+  {
+    name: 'notification',
+    public: true,
+    indexes: [{ accessor: 'by_recipient', algorithm: 'btree', columns: ['recipientId', 'createdAt'] }],
+  },
+  {
+    id:          t.u32().primaryKey().autoInc(),
+    recipientId: t.identity().index('btree'),
+    kind:        t.string(), // TOURNAMENT | FRIEND_REQUEST | FRIEND_ACCEPTED
+    title:       t.string(),
+    body:        t.string(),
+    relatedId:   t.option(t.u32()),
+    read:        t.bool(),
+    createdAt:   t.timestamp(),
+  }
+);
+
 // ─── SCHEMA ───────────────────────────────────────────────────────────────────
 
 const spacetimedb = schema({
   user, fighterTemplate, tournament, arenaTile,
   tournamentFighter, bet, sponsorDrop, liveEvent,
-  contract, auctionBid, friendship,
+  contract, auctionBid, friendship, notification,
 });
 
 export default spacetimedb;
@@ -394,15 +412,27 @@ export const verifyLogin = spacetimedb.reducer(
   }
 );
 
+function notifyAllUsers(ctx: any, kind: string, title: string, body: string, relatedId?: number, exceptIdentity?: any) {
+  for (const u of [...ctx.db.user.iter()]) {
+    if (exceptIdentity && u.identity.toHexString() === exceptIdentity.toHexString()) continue;
+    ctx.db.notification.insert({
+      id: 0, recipientId: u.identity, kind, title, body,
+      relatedId, read: false, createdAt: ctx.timestamp,
+    });
+  }
+}
+
 export const createTournament = spacetimedb.reducer(
   { name: 'createTournament' },
   { name: t.string(), arenaType: t.string() },
   (ctx, { name, arenaType }) => {
-    ctx.db.tournament.insert({
+    const tournamentId = ctx.db.tournament.insert({
       id: 0, name, arenaType, status: 'UPCOMING', currentHour: 0,
       gridWidth: 12, gridHeight: 12, prizePool: 0,
       hostIdentity: ctx.sender, createdAt: ctx.timestamp,
-    });
+    }).id;
+    notifyAllUsers(ctx, 'TOURNAMENT', 'New Tournament Announced',
+      `"${name}" is opening in the ${arenaType}. Place your bets!`, tournamentId, ctx.sender);
   }
 );
 
@@ -723,11 +753,13 @@ export const hostTournament = spacetimedb.reducer(
     if (user.fightersOwned < 10) throw new SenderError('Need 10 fighters to host');
     if (user.balance < 1000)     throw new SenderError('Need $1000 to host');
     ctx.db.user.identity.update({ ...user, balance: user.balance - 1000, tournamentsHosted: user.tournamentsHosted + 1 });
-    ctx.db.tournament.insert({
+    const tournamentId = ctx.db.tournament.insert({
       id: 0, ...args, status: 'UPCOMING', currentHour: 0,
       gridWidth: 12, gridHeight: 12, prizePool: 0,
       hostIdentity: ctx.sender, createdAt: ctx.timestamp,
-    });
+    }).id;
+    notifyAllUsers(ctx, 'TOURNAMENT', 'New Tournament Announced',
+      `"${args.name}" is opening in the ${args.arenaType}. Place your bets!`, tournamentId, ctx.sender);
   }
 );
 
@@ -772,8 +804,14 @@ export const sendFriendRequest = spacetimedb.reducer(
     );
     if (existing) throw new SenderError('A friend request already exists with this player');
 
-    ctx.db.friendship.insert({
+    const fr = ctx.db.friendship.insert({
       id: 0, requesterId: ctx.sender, addresseeId, status: 'PENDING', createdAt: ctx.timestamp,
+    });
+    ctx.db.notification.insert({
+      id: 0, recipientId: addresseeId, kind: 'FRIEND_REQUEST',
+      title: 'New Friend Request',
+      body: `${me.username} wants to be your friend.`,
+      relatedId: fr.id, read: false, createdAt: ctx.timestamp,
     });
   }
 );
@@ -787,8 +825,18 @@ export const respondToFriendRequest = spacetimedb.reducer(
     if (fr.addresseeId.toHexString() !== ctx.sender.toHexString()) throw new SenderError('Not your request to respond to');
     if (fr.status !== 'PENDING') throw new SenderError('Request already resolved');
 
-    if (accept) ctx.db.friendship.id.update({ ...fr, status: 'ACCEPTED' });
-    else        ctx.db.friendship.id.delete(friendshipId);
+    if (accept) {
+      ctx.db.friendship.id.update({ ...fr, status: 'ACCEPTED' });
+      const me = ctx.db.user.identity.find(ctx.sender);
+      ctx.db.notification.insert({
+        id: 0, recipientId: fr.requesterId, kind: 'FRIEND_ACCEPTED',
+        title: 'Friend Request Accepted',
+        body: `${me?.username ?? 'A player'} accepted your friend request.`,
+        relatedId: fr.id, read: false, createdAt: ctx.timestamp,
+      });
+    } else {
+      ctx.db.friendship.id.delete(friendshipId);
+    }
   }
 );
 
@@ -801,6 +849,26 @@ export const removeFriend = spacetimedb.reducer(
     const mine = fr.requesterId.toHexString() === ctx.sender.toHexString() || fr.addresseeId.toHexString() === ctx.sender.toHexString();
     if (!mine) throw new SenderError('Not your friendship to remove');
     ctx.db.friendship.id.delete(friendshipId);
+  }
+);
+
+export const markNotificationRead = spacetimedb.reducer(
+  { name: 'markNotificationRead' },
+  { notificationId: t.u32() },
+  (ctx, { notificationId }) => {
+    const n = ctx.db.notification.id.find(notificationId);
+    if (!n) throw new SenderError('Notification not found');
+    if (n.recipientId.toHexString() !== ctx.sender.toHexString()) throw new SenderError('Not your notification');
+    if (!n.read) ctx.db.notification.id.update({ ...n, read: true });
+  }
+);
+
+export const markAllNotificationsRead = spacetimedb.reducer(
+  { name: 'markAllNotificationsRead' },
+  {},
+  (ctx, _args) => {
+    const mine = [...ctx.db.notification.recipientId.filter(ctx.sender)].filter((n: any) => !n.read);
+    for (const n of mine) ctx.db.notification.id.update({ ...n, read: true });
   }
 );
 

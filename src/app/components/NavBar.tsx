@@ -2,6 +2,7 @@ import { useNavigate, useLocation } from 'react-router';
 import { Wallet, LogOut, Menu, X } from 'lucide-react';
 import { useState } from 'react';
 import { useDB } from '../context/SpacetimeContext';
+import { NotificationCenter } from './NotificationCenter';
 
 const NAV_LINKS = [
   { label: 'Tournaments', path: '/tournament' },
@@ -56,6 +57,9 @@ export function NavBar() {
         <div className="flex items-center gap-3">
           {/* Connection dot */}
           <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-yellow-500'} animate-pulse`} />
+
+          {/* Notifications */}
+          <NotificationCenter />
 
           {/* Balance */}
           <div className="hidden sm:flex items-center gap-2 bg-bg-secondary border border-accent-gold px-3 py-1.5">

@@ -32,6 +32,7 @@ export function useSpacetime() {
   const [auctionBids, setAuctionBids]               = useState<any[]>([]);
   const [users, setUsers]                           = useState<any[]>([]);
   const [friendships, setFriendships]               = useState<any[]>([]);
+  const [notifications, setNotifications]           = useState<any[]>([]);
 
   useEffect(() => {
     const token = localStorage.getItem('spacetime_token') ?? undefined;
@@ -58,6 +59,7 @@ export function useSpacetime() {
             setAuctionBids(normalizeAll(ctx.db.auctionBid.iter()));
             setUsers(normalizeAll(ctx.db.user.iter()));
             setFriendships(normalizeAll(ctx.db.friendship.iter()));
+            setNotifications(normalizeAll(ctx.db.notification.iter()).filter(n => n.recipientId?.toHexString?.() === id.toHexString()));
 
             const me = ctx.db.user.identity.find(id);
             if (me) setCurrentUser(normalize(me));
@@ -74,6 +76,7 @@ export function useSpacetime() {
             tables.contract,
             tables.auctionBid,
             tables.friendship,
+            tables.notification,
           ]);
 
         ctx.db.fighterTemplate.onInsert(()   => setFighters(normalizeAll(ctx.db.fighterTemplate.iter())));
@@ -95,6 +98,12 @@ export function useSpacetime() {
         ctx.db.friendship.onInsert(()        => setFriendships(normalizeAll(ctx.db.friendship.iter())));
         ctx.db.friendship.onUpdate(()        => setFriendships(normalizeAll(ctx.db.friendship.iter())));
         ctx.db.friendship.onDelete(()        => setFriendships(normalizeAll(ctx.db.friendship.iter())));
+        const refreshNotifications = () => setNotifications(
+          normalizeAll(ctx.db.notification.iter()).filter((n: any) => n.recipientId?.toHexString?.() === id.toHexString())
+        );
+        ctx.db.notification.onInsert(refreshNotifications);
+        ctx.db.notification.onUpdate(refreshNotifications);
+        ctx.db.notification.onDelete(refreshNotifications);
         ctx.db.user.onInsert((_ctx: EventContext, row: any) => {
           setUsers(normalizeAll(ctx.db.user.iter()));
           if (row.identity.toHexString() === id.toHexString()) setCurrentUser(normalize(row));
@@ -175,6 +184,16 @@ export function useSpacetime() {
     return conn.reducers.removeFriend({ friendshipId });
   }, [conn]);
 
+  const markNotificationRead = useCallback((notificationId: number) => {
+    if (!conn) return Promise.reject(new Error('Not connected to the arena yet'));
+    return conn.reducers.markNotificationRead({ notificationId });
+  }, [conn]);
+
+  const markAllNotificationsRead = useCallback(() => {
+    if (!conn) return Promise.reject(new Error('Not connected to the arena yet'));
+    return conn.reducers.markAllNotificationsRead({});
+  }, [conn]);
+
   const logout = useCallback(() => {
     localStorage.removeItem('spacetime_token');
     setCurrentUser(null);
@@ -184,9 +203,10 @@ export function useSpacetime() {
   return {
     conn, identity, connected, currentUser,
     fighters, tournaments, tournamentFighters, arenaTiles,
-    bets, liveEvents, sponsorDrops, contracts, auctionBids, users, friendships,
+    bets, liveEvents, sponsorDrops, contracts, auctionBids, users, friendships, notifications,
     register, verifyLogin, updateAccount, placeBet, sponsorFighter,
     createTournament, createFighter, hostTournament, placeBid, logout,
     updateProfile, sendFriendRequest, respondToFriendRequest, removeFriend,
+    markNotificationRead, markAllNotificationsRead,
   };
 }
