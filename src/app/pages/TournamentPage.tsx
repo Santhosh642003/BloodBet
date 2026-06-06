@@ -230,6 +230,8 @@ export function TournamentPage() {
               height={Number(activeTournament.gridHeight ?? 12)}
               tiles={arenaTiles.filter(t => Number(t.tournamentId) === Number(activeTournament.id))}
               roster={rosterEntries}
+              events={filteredEvents}
+              currentHour={Number(activeTournament.currentHour ?? 0)}
               selectedFighterId={selectedFighterId}
               onSelectFighter={(id) => { setSelectedFighterId(id); setBetError(''); setBetSuccess(''); }}
             />
