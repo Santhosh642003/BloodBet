@@ -44,6 +44,61 @@ const TILE_COLORS: Record<string, string> = {
   CORNUCOPIA: '#5a4a14',
 };
 
+// Terrain-style gradient + texture per tile type, with light/dark variants
+// chosen per-tile (deterministically) so adjacent same-type tiles still read
+// as natural, uneven ground rather than a flat repeating grid.
+const TILE_TERRAIN: Record<string, { grads: string[]; texture: string }> = {
+  PLAIN: {
+    grads: [
+      'linear-gradient(160deg, #46464f 0%, #3a3a42 45%, #2f2f37 100%)',
+      'linear-gradient(160deg, #3f3f48 0%, #34343c 45%, #2a2a31 100%)',
+    ],
+    texture: 'repeating-linear-gradient(115deg, rgba(255,255,255,0.035) 0px, rgba(255,255,255,0.035) 2px, transparent 2px, transparent 7px)',
+  },
+  FOREST: {
+    grads: [
+      'linear-gradient(160deg, #2c4d36 0%, #1f3a26 45%, #142a1a 100%)',
+      'linear-gradient(160deg, #25432e 0%, #1a3320 45%, #112317 100%)',
+    ],
+    texture: 'radial-gradient(circle at 30% 35%, rgba(0,0,0,0.25) 0 18%, transparent 19%), radial-gradient(circle at 65% 60%, rgba(0,0,0,0.22) 0 16%, transparent 17%), radial-gradient(circle at 45% 80%, rgba(0,0,0,0.2) 0 14%, transparent 15%)',
+  },
+  WATER: {
+    grads: [
+      'linear-gradient(160deg, #2a5a73 0%, #1c3a4a 50%, #122836 100%)',
+      'linear-gradient(160deg, #245067 0%, #18323f 50%, #0e212c 100%)',
+    ],
+    texture: 'repeating-linear-gradient(100deg, rgba(255,255,255,0.07) 0px, rgba(255,255,255,0.07) 1px, transparent 1px, transparent 6px)',
+  },
+  RUINS: {
+    grads: [
+      'linear-gradient(160deg, #5c4c36 0%, #4a3c2a 45%, #382c1f 100%)',
+      'linear-gradient(160deg, #54442f 0%, #423423 45%, #312619 100%)',
+    ],
+    texture: 'linear-gradient(45deg, transparent 46%, rgba(0,0,0,0.3) 47%, rgba(0,0,0,0.3) 49%, transparent 50%), linear-gradient(-45deg, transparent 56%, rgba(0,0,0,0.25) 57%, rgba(0,0,0,0.25) 59%, transparent 60%)',
+  },
+  SHELTER: {
+    grads: [
+      'linear-gradient(160deg, #38614c 0%, #2a4a3c 45%, #1d3830 100%)',
+      'linear-gradient(160deg, #305947 0%, #244337 45%, #182f29 100%)',
+    ],
+    texture: 'repeating-linear-gradient(90deg, rgba(255,255,255,0.04) 0px, rgba(255,255,255,0.04) 3px, transparent 3px, transparent 9px)',
+  },
+  DANGER: {
+    grads: [
+      'linear-gradient(160deg, #61302c 0%, #4a2020 45%, #341515 100%)',
+      'linear-gradient(160deg, #582b27 0%, #421c1c 45%, #2e1212 100%)',
+    ],
+    texture: 'radial-gradient(circle at 35% 30%, rgba(0,0,0,0.3) 0 20%, transparent 21%), radial-gradient(circle at 70% 70%, rgba(0,0,0,0.28) 0 18%, transparent 19%)',
+  },
+  CORNUCOPIA: {
+    grads: [
+      'linear-gradient(160deg, #7a6620 0%, #5a4a14 45%, #41360e 100%)',
+      'linear-gradient(160deg, #6f5d1c 0%, #51420f 45%, #3a300c 100%)',
+    ],
+    texture: 'radial-gradient(circle at 50% 40%, rgba(255,215,120,0.25) 0%, transparent 60%)',
+  },
+};
+
 const RESOURCE_ICONS: Record<string, string> = {
   FOOD:    '🍖',
   WATER:   '💧',
@@ -64,8 +119,8 @@ const ARCHETYPE_COLORS: Record<string, string> = {
   SURVIVALIST: '#e0c14a',
 };
 
-const TILE_W = 72;
-const TILE_H = 36;
+const TILE_W = 104;
+const TILE_H = 52;
 
 const EVENT_BURST_ICONS: Record<string, string> = {
   KILL:        '⚔️',
@@ -150,7 +205,11 @@ export function ArenaMap({ width, height, tiles, roster, events = [], currentHou
             Array.from({ length: width }).map((__, x) => {
               const tile = tileAt(x, y);
               const { left, top } = isoPos(x, y);
-              const color = tile ? (TILE_COLORS[tile.tileType] ?? TILE_COLORS.PLAIN) : TILE_COLORS.PLAIN;
+              const tileType = tile?.tileType ?? 'PLAIN';
+              const terrain = TILE_TERRAIN[tileType] ?? TILE_TERRAIN.PLAIN;
+              // Deterministic per-tile variant so same-type tiles aren't identical
+              const variantIdx = (x * 31 + y * 17) % terrain.grads.length;
+              const elevation = ((x * 13 + y * 7) % 5) - 2; // -2..2 px, subtle height variation
               return (
                 <div
                   key={`${x}-${y}`}
@@ -166,11 +225,12 @@ export function ArenaMap({ width, height, tiles, roster, events = [], currentHou
                     style={{
                       width: TILE_W,
                       height: TILE_H,
-                      background: color,
+                      transform: `translateY(${elevation}px)`,
+                      background: `${terrain.texture}, ${terrain.grads[variantIdx]}`,
                       clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)',
-                      border: '1px solid rgba(255,255,255,0.06)',
+                      boxShadow: `inset 0 0 0 1px rgba(255,255,255,0.05), 0 ${2 + elevation}px 6px rgba(0,0,0,0.35)`,
                     }}
-                    title={tile?.tileType ?? 'PLAIN'}
+                    title={tileType}
                   />
                   {tile?.hasResource && tile.resourceType && (
                     <div
