@@ -10,6 +10,7 @@ const NAV_LINKS = [
   { label: 'Build',       path: '/build-fighter' },
   { label: 'Host',        path: '/host-tournament' },
   { label: 'Leaderboard', path: '/leaderboard' },
+  { label: 'Players',     path: '/players' },
 ];
 
 export function NavBar() {
@@ -63,8 +64,9 @@ export function NavBar() {
 
           {/* Avatar */}
           <div className="w-9 h-9 bg-bg-secondary border border-accent-gold flex items-center justify-center font-display text-accent-gold uppercase text-sm cursor-pointer"
-            onClick={() => navigate('/dashboard')}>
-            {username[0] ?? 'U'}
+            onClick={() => navigate('/profile')}
+            title="Profile">
+            {currentUser?.avatarEmoji ?? username[0] ?? 'U'}
           </div>
 
           {/* Logout */}

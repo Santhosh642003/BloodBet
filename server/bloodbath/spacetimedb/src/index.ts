@@ -13,6 +13,24 @@ const user = table(
     tournamentsHosted: t.u32(),
     fightersOwned:     t.u32(),
     createdAt:         t.timestamp(),
+    bio:               t.string(),
+    avatarEmoji:       t.string(),
+    favoriteArchetype: t.string(),
+  }
+);
+
+const friendship = table(
+  {
+    name: 'friendship',
+    public: true,
+    indexes: [{ accessor: 'by_pair', algorithm: 'btree', columns: ['requesterId', 'addresseeId'] }],
+  },
+  {
+    id:           t.u32().primaryKey().autoInc(),
+    requesterId:  t.identity().index('btree'),
+    addresseeId:  t.identity().index('btree'),
+    status:       t.string(), // PENDING | ACCEPTED
+    createdAt:    t.timestamp(),
   }
 );
 
@@ -161,7 +179,7 @@ const auctionBid = table(
 const spacetimedb = schema({
   user, fighterTemplate, tournament, arenaTile,
   tournamentFighter, bet, sponsorDrop, liveEvent,
-  contract, auctionBid,
+  contract, auctionBid, friendship,
 });
 
 export default spacetimedb;
@@ -339,6 +357,7 @@ export const registerUser = spacetimedb.reducer(
         identity: ctx.sender, username, email, passwordHash,
         balance: 100.0, tournamentsHosted: 0, fightersOwned: 0,
         createdAt: ctx.timestamp,
+        bio: '', avatarEmoji: '🗡️', favoriteArchetype: 'STRATEGIC',
       });
     }
   }
@@ -719,5 +738,67 @@ export const placeBid = spacetimedb.reducer(
     if (!user) throw new Error('Not registered');
     if (user.balance < amount) throw new Error('Insufficient funds');
     ctx.db.auctionBid.insert({ id: 0, fighterId, bidderId: ctx.sender, amount, placedAt: ctx.timestamp });
+  }
+);
+// ─── PROFILE & SOCIAL ─────────────────────────────────────────────────────────
+
+export const updateProfile = spacetimedb.reducer(
+  { name: 'updateProfile' },
+  { bio: t.string(), avatarEmoji: t.string(), favoriteArchetype: t.string() },
+  (ctx, { bio, avatarEmoji, favoriteArchetype }) => {
+    const user = ctx.db.user.identity.find(ctx.sender);
+    if (!user) throw new Error('Not registered');
+    if (bio.length > 280) throw new Error('Bio is too long (max 280 characters)');
+    ctx.db.user.identity.update({ ...user, bio, avatarEmoji, favoriteArchetype });
+  }
+);
+
+export const sendFriendRequest = spacetimedb.reducer(
+  { name: 'sendFriendRequest' },
+  { addresseeId: t.identity() },
+  (ctx, { addresseeId }) => {
+    const me = ctx.db.user.identity.find(ctx.sender);
+    if (!me) throw new Error('Not registered');
+    if (ctx.sender.isEqual ? ctx.sender.isEqual(addresseeId) : ctx.sender.toHexString() === addresseeId.toHexString()) {
+      throw new Error('You cannot friend yourself');
+    }
+    const target = ctx.db.user.identity.find(addresseeId);
+    if (!target) throw new Error('Player not found');
+
+    const existing = [...ctx.db.friendship.iter()].find((f: any) =>
+      (f.requesterId.toHexString() === ctx.sender.toHexString() && f.addresseeId.toHexString() === addresseeId.toHexString()) ||
+      (f.requesterId.toHexString() === addresseeId.toHexString() && f.addresseeId.toHexString() === ctx.sender.toHexString())
+    );
+    if (existing) throw new Error('A friend request already exists with this player');
+
+    ctx.db.friendship.insert({
+      id: 0, requesterId: ctx.sender, addresseeId, status: 'PENDING', createdAt: ctx.timestamp,
+    });
+  }
+);
+
+export const respondToFriendRequest = spacetimedb.reducer(
+  { name: 'respondToFriendRequest' },
+  { friendshipId: t.u32(), accept: t.bool() },
+  (ctx, { friendshipId, accept }) => {
+    const fr = ctx.db.friendship.id.find(friendshipId);
+    if (!fr) throw new Error('Friend request not found');
+    if (fr.addresseeId.toHexString() !== ctx.sender.toHexString()) throw new Error('Not your request to respond to');
+    if (fr.status !== 'PENDING') throw new Error('Request already resolved');
+
+    if (accept) ctx.db.friendship.id.update({ ...fr, status: 'ACCEPTED' });
+    else        ctx.db.friendship.id.delete(friendshipId);
+  }
+);
+
+export const removeFriend = spacetimedb.reducer(
+  { name: 'removeFriend' },
+  { friendshipId: t.u32() },
+  (ctx, { friendshipId }) => {
+    const fr = ctx.db.friendship.id.find(friendshipId);
+    if (!fr) throw new Error('Friendship not found');
+    const mine = fr.requesterId.toHexString() === ctx.sender.toHexString() || fr.addresseeId.toHexString() === ctx.sender.toHexString();
+    if (!mine) throw new Error('Not your friendship to remove');
+    ctx.db.friendship.id.delete(friendshipId);
   }
 );
