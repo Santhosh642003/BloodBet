@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { CharacterCard } from '../components/CharacterCard';
 import { Button } from '../components/Button';
+import { NavBar } from '../components/NavBar';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Clock, Sword, Users, Zap, Eye, Trophy } from 'lucide-react';
 import { useNavigate } from 'react-router';
@@ -102,22 +103,7 @@ export function TournamentPage() {
 
   return (
     <div className="min-h-screen bg-bg-primary">
-      {/* Navigation */}
-      <nav className="bg-bg-primary border-b border-separator px-6 py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="font-display text-2xl text-accent-gold cursor-pointer" onClick={() => navigate('/')}>
-            BLOODBETS
-          </div>
-          <div className="flex items-center gap-4">
-            {currentUser && (
-              <div className="font-mono text-sm text-accent-gold">
-                💰 ${Number(currentUser?.balance ?? 0).toFixed(2)}
-              </div>
-            )}
-            <Button variant="secondary" onClick={() => navigate('/dashboard')}>Dashboard</Button>
-          </div>
-        </div>
-      </nav>
+      <NavBar />
 
       <div className="max-w-7xl mx-auto p-6">
         {/* Tournament Header */}

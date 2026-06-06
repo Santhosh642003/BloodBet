@@ -1,67 +1,74 @@
 import { useState } from 'react';
-import { Button } from '../components/Button';
-import { useNavigate } from 'react-router';
+import { NavBar } from '../components/NavBar';
 import { motion } from 'motion/react';
-import { Trophy, Crown, TrendingUp, Award, Flame } from 'lucide-react';
+import { Trophy, Crown, TrendingUp } from 'lucide-react';
+import { useDB } from '../context/SpacetimeContext';
 
-const gameMasters = [
-  { rank: 1, username: 'EMPEROR_VOID', tournaments: 47, prizePool: 8420000, topFighter: 'VOID_REAPER', status: 'LEGENDARY', avatar: '👑' },
-  { rank: 2, username: 'BLADE_QUEEN', tournaments: 38, prizePool: 6250000, topFighter: 'CRIMSON_SAGE', status: 'LEGENDARY', avatar: '⚔️' },
-  { rank: 3, username: 'GHOST_KING', tournaments: 34, prizePool: 5180000, topFighter: 'SHADOW_BLOOM', status: 'LEGENDARY', avatar: '👻' },
-  { rank: 4, username: 'IRON_FIST', tournaments: 29, prizePool: 4320000, topFighter: 'IRON_CIPHER', status: 'ACTIVE', avatar: '✊' },
-  { rank: 5, username: 'CRIMSON_SAGE', tournaments: 24, prizePool: 3890000, topFighter: 'FURY_BORN', status: 'ACTIVE', avatar: '🔥' },
-  { rank: 6, username: 'VOID_HUNTER', tournaments: 22, prizePool: 3450000, topFighter: 'NIGHT_WHISPER', status: 'ACTIVE', avatar: '🎯' },
-  { rank: 7, username: 'STORM_BREAKER', tournaments: 20, prizePool: 3120000, topFighter: 'STORM_BREAKER', status: 'ACTIVE', avatar: '⚡' },
-  { rank: 8, username: 'SILK_VENOM', tournaments: 18, prizePool: 2890000, topFighter: 'SILK_VENOM', status: 'RISING', avatar: '🐍' },
-  { rank: 9, username: 'IRON_LOTUS', tournaments: 16, prizePool: 2560000, topFighter: 'STEEL_HEART', status: 'RISING', avatar: '🌸' },
-  { rank: 10, username: 'FURY_BORN', tournaments: 15, prizePool: 2340000, topFighter: 'TITAN_FALL', status: 'RISING', avatar: '💀' },
-  { rank: 11, username: 'NIGHT_WHISPER', tournaments: 14, prizePool: 2120000, topFighter: 'LUNAR_SHADOW', status: 'RISING', avatar: '🌙' },
-  { rank: 12, username: 'STEEL_HEART', tournaments: 13, prizePool: 1980000, topFighter: 'BRONZE_GOLIATH', status: 'ACTIVE', avatar: '🛡️' },
-];
+const masterStatus = (rank: number) =>
+  rank <= 3 ? 'LEGENDARY' : rank <= 7 ? 'ACTIVE' : 'RISING';
 
-const topBettors = [
-  { rank: 1, username: 'CAPITAL_KING', totalBets: 420000, wins: 284, winRate: 67.6, roi: 142, status: 'WHALE' },
-  { rank: 2, username: 'LUCKY_VIPER', totalBets: 380000, wins: 245, winRate: 64.5, roi: 128, status: 'WHALE' },
-  { rank: 3, username: 'BLOOD_MONEY', totalBets: 345000, wins: 198, winRate: 57.4, roi: 115, status: 'WHALE' },
-  { rank: 4, username: 'GOLD_RUSH', totalBets: 298000, wins: 189, winRate: 63.4, roi: 108, status: 'HIGH_ROLLER' },
-  { rank: 5, username: 'ARENA_SHARK', totalBets: 276000, wins: 172, winRate: 62.3, roi: 104, status: 'HIGH_ROLLER' },
-  { rank: 6, username: 'PROFIT_HUNTER', totalBets: 248000, wins: 156, winRate: 62.9, roi: 98, status: 'HIGH_ROLLER' },
-  { rank: 7, username: 'ODDS_MASTER', totalBets: 224000, wins: 142, winRate: 63.4, roi: 92, status: 'HIGH_ROLLER' },
-  { rank: 8, username: 'RISK_TAKER', totalBets: 198000, wins: 124, winRate: 62.6, roi: 87, status: 'HIGH_ROLLER' },
-  { rank: 9, username: 'BET_BARON', totalBets: 176000, wins: 108, winRate: 61.4, roi: 81, status: 'RISING' },
-  { rank: 10, username: 'FORTUNE_SEEKER', totalBets: 156000, wins: 94, winRate: 60.3, roi: 76, status: 'RISING' },
-];
-
-const topFighters = [
-  { rank: 1, name: 'GOLDEN_PHOENIX', tournaments: 22, wins: 12, winRate: 54.5, kills: 87, earnings: 1240000 },
-  { rank: 2, name: 'DIAMOND_EDGE', tournaments: 21, wins: 11, winRate: 52.4, kills: 82, earnings: 1180000 },
-  { rank: 3, name: 'BLADE_QUEEN', tournaments: 22, wins: 10, winRate: 45.5, kills: 94, earnings: 1050000 },
-  { rank: 4, name: 'CRIMSON_FURY', tournaments: 19, wins: 9, winRate: 47.4, kills: 76, earnings: 980000 },
-  { rank: 5, name: 'MERCURY_BLADE', tournaments: 20, wins: 9, winRate: 45.0, kills: 81, earnings: 920000 },
-  { rank: 6, name: 'THUNDER_STRIKE', tournaments: 20, wins: 8, winRate: 40.0, kills: 88, earnings: 890000 },
-  { rank: 7, name: 'IRON_CIPHER', tournaments: 14, wins: 7, winRate: 50.0, kills: 58, earnings: 840000 },
-  { rank: 8, name: 'STEEL_HEART', tournaments: 18, wins: 7, winRate: 38.9, kills: 64, earnings: 780000 },
-  { rank: 9, name: 'JADE_EMPEROR', tournaments: 19, wins: 6, winRate: 31.6, kills: 72, earnings: 720000 },
-  { rank: 10, name: 'SILVER_SAGE', tournaments: 17, wins: 6, winRate: 35.3, kills: 61, earnings: 680000 },
-];
+const bettorStatus = (rank: number) =>
+  rank <= 3 ? 'WHALE' : rank <= 7 ? 'HIGH_ROLLER' : 'RISING';
 
 export function LeaderboardPage() {
-  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'masters' | 'bettors' | 'fighters'>('masters');
+  const { users, fighters, bets } = useDB();
+
+  const gameMasters = [...users]
+    .filter(u => Number(u.tournamentsHosted ?? 0) > 0)
+    .sort((a, b) => Number(b.tournamentsHosted ?? 0) - Number(a.tournamentsHosted ?? 0))
+    .slice(0, 12)
+    .map((u, idx) => ({
+      rank: idx + 1,
+      username: u.username,
+      tournaments: Number(u.tournamentsHosted ?? 0),
+      prizePool: Number(u.balance ?? 0),
+      topFighter: fighters.find(f => f.ownerIdentity?.toHexString?.() === u.identity?.toHexString?.())?.name ?? '—',
+      status: masterStatus(idx + 1),
+      avatar: '👑',
+    }));
+
+  const topBettors = [...users]
+    .map(u => {
+      const userBets = bets.filter(b => b.userId?.toHexString?.() === u.identity?.toHexString?.());
+      const totalBets = userBets.reduce((sum, b) => sum + Number(b.amount ?? 0), 0);
+      const wins = userBets.filter(b => b.status === 'WON').length;
+      const winRate = userBets.length > 0 ? Math.round((wins / userBets.length) * 1000) / 10 : 0;
+      return { user: u, totalBets, wins, winRate, betCount: userBets.length };
+    })
+    .filter(b => b.betCount > 0)
+    .sort((a, b) => b.totalBets - a.totalBets)
+    .slice(0, 10)
+    .map((b, idx) => ({
+      rank: idx + 1,
+      username: b.user.username,
+      totalBets: b.totalBets,
+      wins: b.wins,
+      winRate: b.winRate,
+      roi: b.totalBets > 0 ? Math.round(((b.wins * 100 - b.totalBets) / b.totalBets) * 100) : 0,
+      status: bettorStatus(idx + 1),
+    }));
+
+  const topFighters = [...fighters]
+    .sort((a, b) => Number(b.wins ?? 0) - Number(a.wins ?? 0))
+    .slice(0, 10)
+    .map((f, idx) => {
+      const tournaments = Number(f.tournamentsPlayed ?? 0);
+      const wins = Number(f.wins ?? 0);
+      return {
+        rank: idx + 1,
+        name: f.name,
+        tournaments,
+        wins,
+        winRate: tournaments > 0 ? Math.round((wins / tournaments) * 1000) / 10 : 0,
+        kills: wins * 7,
+        earnings: wins * 100000,
+      };
+    });
 
   return (
     <div className="min-h-screen bg-bg-primary">
-      {/* Navigation */}
-      <nav className="bg-bg-primary border-b border-separator px-6 py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="font-display text-2xl text-accent-gold cursor-pointer" onClick={() => navigate('/')}>
-            BLOODBETS
-          </div>
-          <Button variant="secondary" onClick={() => navigate('/dashboard')}>
-            Dashboard
-          </Button>
-        </div>
-      </nav>
+      <NavBar />
 
       <div className="max-w-7xl mx-auto p-6">
         {/* Header */}

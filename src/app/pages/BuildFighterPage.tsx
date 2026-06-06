@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
+import { NavBar } from '../components/NavBar';
 import { useNavigate } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
 import { ChevronRight, ChevronLeft, Sparkles } from 'lucide-react';
+import { useDB } from '../context/SpacetimeContext';
 
 const archetypes = [
   { id: 'strategist', name: 'STRATEGIST', icon: '🧠', description: 'High intelligence, alliance-focused, tactical' },
@@ -38,6 +40,7 @@ const avatarOptions = [
 
 export function BuildFighterPage() {
   const navigate = useNavigate();
+  const { createFighter } = useDB();
   const [step, setStep] = useState(1);
   const [formData, setFormData] = useState({
     name: '',
@@ -81,19 +84,24 @@ export function BuildFighterPage() {
     return false;
   };
 
+  const deployFighter = () => {
+    const archetypeName = archetypes.find(a => a.id === formData.archetype)?.name ?? formData.archetype;
+    createFighter(
+      formData.name,
+      formData.backstory,
+      archetypeName,
+      formData.stats.strength,
+      formData.stats.speed,
+      formData.stats.intelligence,
+      formData.stats.luck,
+      formData.stats.charisma,
+    );
+    navigate('/fighters');
+  };
+
   return (
     <div className="min-h-screen bg-bg-primary">
-      {/* Navigation */}
-      <nav className="bg-bg-primary border-b border-separator px-6 py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="font-display text-2xl text-accent-gold cursor-pointer" onClick={() => navigate('/')}>
-            BLOODBETS
-          </div>
-          <Button variant="secondary" onClick={() => navigate('/dashboard')}>
-            Dashboard
-          </Button>
-        </div>
-      </nav>
+      <NavBar />
 
       <div className="max-w-6xl mx-auto p-6">
         {/* Header */}
@@ -517,7 +525,7 @@ export function BuildFighterPage() {
             </Button>
           ) : (
             <Button
-              onClick={() => navigate('/dashboard')}
+              onClick={deployFighter}
               disabled={!canProceed()}
               className="flex items-center gap-2"
             >

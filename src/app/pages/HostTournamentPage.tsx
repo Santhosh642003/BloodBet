@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
+import { NavBar } from '../components/NavBar';
 import { useNavigate } from 'react-router';
 import { motion } from 'motion/react';
 import { Crown, Shuffle, Zap } from 'lucide-react';
+import { useDB } from '../context/SpacetimeContext';
 
 const arenas = [
   { id: 'arctic', name: 'ARCTIC WASTELAND', icon: '❄️', modifier: 'SPD -1 for all', image: 'linear-gradient(135deg, #4A9EFF, #F0EDE6)' },
@@ -23,6 +25,7 @@ const obstacles = [
 
 export function HostTournamentPage() {
   const navigate = useNavigate();
+  const { hostTournament } = useDB();
   const [useAI, setUseAI] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
@@ -63,19 +66,14 @@ export function HostTournamentPage() {
     });
   };
 
+  const launchTournament = () => {
+    hostTournament(formData.name, formData.arena);
+    navigate('/tournament');
+  };
+
   return (
     <div className="min-h-screen bg-bg-primary">
-      {/* Navigation */}
-      <nav className="bg-bg-primary border-b border-separator px-6 py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="font-display text-2xl text-accent-gold cursor-pointer" onClick={() => navigate('/')}>
-            BLOODBETS
-          </div>
-          <Button variant="secondary" onClick={() => navigate('/dashboard')}>
-            Dashboard
-          </Button>
-        </div>
-      </nav>
+      <NavBar />
 
       <div className="max-w-6xl mx-auto p-6">
         {/* Header */}
@@ -417,7 +415,8 @@ export function HostTournamentPage() {
         <div className="mt-8 text-center">
           <Button
             className="inline-flex items-center gap-3 px-12 py-6 text-lg"
-            onClick={() => navigate('/dashboard')}
+            onClick={launchTournament}
+            disabled={!formData.name || !formData.arena}
           >
             <Crown className="w-6 h-6" />
             Launch Tournament — $1,000

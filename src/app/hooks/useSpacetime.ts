@@ -28,6 +28,9 @@ export function useSpacetime() {
   const [bets, setBets]                             = useState<any[]>([]);
   const [liveEvents, setLiveEvents]                 = useState<any[]>([]);
   const [sponsorDrops, setSponsorDrops]             = useState<any[]>([]);
+  const [contracts, setContracts]                   = useState<any[]>([]);
+  const [auctionBids, setAuctionBids]               = useState<any[]>([]);
+  const [users, setUsers]                           = useState<any[]>([]);
 
   useEffect(() => {
     const token = localStorage.getItem('spacetime_token') ?? undefined;
@@ -50,6 +53,9 @@ export function useSpacetime() {
             setBets(normalizeAll(ctx.db.bet.iter()));
             setLiveEvents(normalizeAll(ctx.db.liveEvent.iter()));
             setSponsorDrops(normalizeAll(ctx.db.sponsorDrop.iter()));
+            setContracts(normalizeAll(ctx.db.contract.iter()));
+            setAuctionBids(normalizeAll(ctx.db.auctionBid.iter()));
+            setUsers(normalizeAll(ctx.db.user.iter()));
 
             // Auto-login: find user for this identity, or grab first available
             const me = ctx.db.user.identity.find(id)
@@ -82,10 +88,15 @@ export function useSpacetime() {
         ctx.db.liveEvent.onInsert(()         => setLiveEvents(normalizeAll(ctx.db.liveEvent.iter())));
         ctx.db.sponsorDrop.onInsert(()       => setSponsorDrops(normalizeAll(ctx.db.sponsorDrop.iter())));
         ctx.db.sponsorDrop.onUpdate(()       => setSponsorDrops(normalizeAll(ctx.db.sponsorDrop.iter())));
+        ctx.db.contract.onInsert(()          => setContracts(normalizeAll(ctx.db.contract.iter())));
+        ctx.db.contract.onUpdate(()          => setContracts(normalizeAll(ctx.db.contract.iter())));
+        ctx.db.auctionBid.onInsert(()        => setAuctionBids(normalizeAll(ctx.db.auctionBid.iter())));
         ctx.db.user.onInsert((_ctx: EventContext, row: any) => {
+          setUsers(normalizeAll(ctx.db.user.iter()));
           if (row.identity.toHexString() === id.toHexString()) setCurrentUser(normalize(row));
         });
         ctx.db.user.onUpdate((_ctx: EventContext, _old: any, row: any) => {
+          setUsers(normalizeAll(ctx.db.user.iter()));
           if (row.identity.toHexString() === id.toHexString()) setCurrentUser(normalize(row));
         });
       })
@@ -142,7 +153,7 @@ export function useSpacetime() {
   return {
     conn, identity, connected, currentUser,
     fighters, tournaments, tournamentFighters, arenaTiles,
-    bets, liveEvents, sponsorDrops,
+    bets, liveEvents, sponsorDrops, contracts, auctionBids, users,
     register, verifyLogin, placeBet, sponsorFighter,
     createTournament, createFighter, hostTournament, placeBid, logout,
   };

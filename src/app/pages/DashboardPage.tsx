@@ -1,5 +1,5 @@
 import { Button } from '../components/Button';
-import { Bell, Wallet, LogOut } from 'lucide-react';
+import { NavBar } from '../components/NavBar';
 import { motion } from 'motion/react';
 import { useNavigate } from 'react-router';
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
@@ -10,7 +10,7 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const {
     currentUser, connected, fighters, tournaments,
-    bets, logout, identity,
+    bets, identity,
   } = useDB();
 
   // Redirect to login if not connected or not registered
@@ -49,56 +49,9 @@ export function DashboardPage() {
   const getFighterName = (id: number) =>
     fighters.find(f => Number(f.id) === id)?.name ?? `Fighter #${id}`;
 
-  const handleLogout = () => {
-    logout();
-    navigate('/login');
-  };
-
   return (
     <div className="min-h-screen bg-bg-primary">
-      {/* Top Navigation */}
-      <nav className="bg-bg-primary border-b border-separator sticky top-0 z-50 px-6 py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="font-display text-2xl text-accent-gold cursor-pointer" onClick={() => navigate('/')}>
-            BLOODBETS
-          </div>
-
-          <div className="hidden md:flex items-center gap-8 font-heading text-sm uppercase">
-            <a onClick={() => navigate('/tournament')} className="text-accent-gold hover:brightness-110 transition-all cursor-pointer">Tournaments</a>
-            <a onClick={() => navigate('/fighters')} className="text-text-secondary hover:text-accent-gold transition-colors cursor-pointer">Fighters</a>
-            <a onClick={() => navigate('/build-fighter')} className="text-text-secondary hover:text-accent-gold transition-colors cursor-pointer">Build Fighter</a>
-            <a onClick={() => navigate('/contracts')} className="text-text-secondary hover:text-accent-gold transition-colors cursor-pointer">Contracts</a>
-            <a onClick={() => navigate('/host-tournament')} className="text-text-secondary hover:text-accent-gold transition-colors cursor-pointer">Host</a>
-            <a onClick={() => navigate('/leaderboard')} className="text-text-secondary hover:text-accent-gold transition-colors cursor-pointer">Leaderboard</a>
-          </div>
-
-          <div className="flex items-center gap-4">
-            {/* Balance */}
-            <div className="flex items-center gap-2 bg-bg-secondary border border-accent-gold px-4 py-2">
-              <Wallet className="w-4 h-4 text-accent-gold" />
-              <span className="font-mono text-accent-gold">${balance.toFixed(2)}</span>
-            </div>
-
-            {/* Notification bell */}
-            <button className="relative">
-              <Bell className="w-5 h-5 text-text-secondary hover:text-accent-gold transition-colors" />
-              {activeBets.length > 0 && (
-                <div className="absolute -top-1 -right-1 w-2 h-2 bg-destructive rounded-full" />
-              )}
-            </button>
-
-            {/* Avatar */}
-            <div className="w-10 h-10 bg-bg-secondary border border-accent-gold flex items-center justify-center font-display text-accent-gold uppercase">
-              {username[0] ?? 'U'}
-            </div>
-
-            {/* Logout */}
-            <button onClick={handleLogout} className="text-text-secondary hover:text-accent-gold transition-colors">
-              <LogOut className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-      </nav>
+      <NavBar />
 
       <div className="max-w-7xl mx-auto p-6 space-y-6">
 
