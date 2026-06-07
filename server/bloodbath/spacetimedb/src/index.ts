@@ -524,45 +524,63 @@ function processSponsorDrops(ctx: any, tournamentId: number, hour: number) {
 
 // ─── LIFECYCLE ────────────────────────────────────────────────────────────────
 
-export const init = spacetimedb.init(ctx => {
-  const archetypes = ['AGGRESSIVE', 'STRATEGIC', 'COWARDLY', 'DIPLOMATIC', 'BETRAYER', 'SURVIVALIST'];
-  const names = [
-    'IRON_CIPHER', 'VEXOR_9', 'NULLBORN', 'ECHO_FANG', 'PRISM_WILD',
-    'SHADOW_BLOOM', 'OMEN_X', 'DUSK_REAPER', 'FORGE_7', 'STATIC_VALE',
-    'CRIMSON_LOG', 'VOID_STRIDER', 'NEON_WRAITH', 'ARCTIC_PULSE', 'EMBER_FALL',
-    'STEEL_MIRAGE', 'PHANTOM_CORE', 'DARK_FLUX', 'SILVER_COIL', 'BINARY_GHOST',
-    'RAZOR_TIDE', 'ONYX_HERALD', 'FROST_CIPHER', 'TOXIC_VEIL', 'BLAZE_UNIT',
-    'GRAVE_SIGNAL', 'APEX_NULL', 'STORM_INDEX', 'CHROME_SAINT', 'INFERNO_9',
-    'COLD_VERDICT', 'RUNE_SHADE', 'IRON_SPECTER', 'ZERO_BLOOM', 'PYRO_LANCER',
-    'SILENT_AXIOM', 'DREAD_COMET', 'HOLLOW_SPIKE', 'OBSIDIAN_7', 'SPARK_REAVER',
-    'PALE_DRIFTER', 'BONE_CIRCUIT', 'FLUX_REAPER', 'NOVA_SHADE', 'GRIM_ORACLE',
-    'ECHO_WARDEN', 'SULFUR_X', 'TITAN_VEIL', 'CRYSTAL_FANG', 'ABYSSAL_ONE',
-  ];
-  const lores = [
-    'A tactical genius forged in digital warfare. Never loses an ally unnecessarily.',
-    'Pure aggression. Charges first, thinks never. Surprisingly effective.',
-    'Speaks to no one. Trusts no one. Has never been betrayed.',
-    'Former medic unit reprogrammed for survival. Heals allies to build loyalty, then abandons them.',
-    'Chaos incarnate. No pattern. No strategy. Somehow still breathing.',
-    'Moves through data like smoke. Never seen until it is too late.',
-    'Ancient code. Predates all others. Has seen every strategy before.',
-    'Harvests fear. The longer a tournament goes, the stronger it becomes.',
-    'Built in a forge of failed experiments. Each scar is a lesson.',
-    'Silence is its weapon. It has never spoken a word in any arena.',
-  ];
+const SEED_ARCHETYPES = ['AGGRESSIVE', 'STRATEGIC', 'COWARDLY', 'DIPLOMATIC', 'BETRAYER', 'SURVIVALIST'];
+const SEED_NAMES = [
+  'IRON_CIPHER', 'VEXOR_9', 'NULLBORN', 'ECHO_FANG', 'PRISM_WILD',
+  'SHADOW_BLOOM', 'OMEN_X', 'DUSK_REAPER', 'FORGE_7', 'STATIC_VALE',
+  'CRIMSON_LOG', 'VOID_STRIDER', 'NEON_WRAITH', 'ARCTIC_PULSE', 'EMBER_FALL',
+  'STEEL_MIRAGE', 'PHANTOM_CORE', 'DARK_FLUX', 'SILVER_COIL', 'BINARY_GHOST',
+  'RAZOR_TIDE', 'ONYX_HERALD', 'FROST_CIPHER', 'TOXIC_VEIL', 'BLAZE_UNIT',
+  'GRAVE_SIGNAL', 'APEX_NULL', 'STORM_INDEX', 'CHROME_SAINT', 'INFERNO_9',
+  'COLD_VERDICT', 'RUNE_SHADE', 'IRON_SPECTER', 'ZERO_BLOOM', 'PYRO_LANCER',
+  'SILENT_AXIOM', 'DREAD_COMET', 'HOLLOW_SPIKE', 'OBSIDIAN_7', 'SPARK_REAVER',
+  'PALE_DRIFTER', 'BONE_CIRCUIT', 'FLUX_REAPER', 'NOVA_SHADE', 'GRIM_ORACLE',
+  'ECHO_WARDEN', 'SULFUR_X', 'TITAN_VEIL', 'CRYSTAL_FANG', 'ABYSSAL_ONE',
+];
+const SEED_LORES = [
+  'A tactical genius forged in digital warfare. Never loses an ally unnecessarily.',
+  'Pure aggression. Charges first, thinks never. Surprisingly effective.',
+  'Speaks to no one. Trusts no one. Has never been betrayed.',
+  'Former medic unit reprogrammed for survival. Heals allies to build loyalty, then abandons them.',
+  'Chaos incarnate. No pattern. No strategy. Somehow still breathing.',
+  'Moves through data like smoke. Never seen until it is too late.',
+  'Ancient code. Predates all others. Has seen every strategy before.',
+  'Harvests fear. The longer a tournament goes, the stronger it becomes.',
+  'Built in a forge of failed experiments. Each scar is a lesson.',
+  'Silence is its weapon. It has never spoken a word in any arena.',
+];
+
+function seedFighters(ctx: any) {
+  // Skip names that already exist
+  const existingNames = new Set([...ctx.db.fighterTemplate.iter()].map((f: any) => String(f.name)));
   for (let i = 0; i < 50; i++) {
-    const archetype = archetypes[i % archetypes.length];
-    const name = names[i];
+    const name = SEED_NAMES[i];
+    if (existingNames.has(name)) continue;
+    const archetype = SEED_ARCHETYPES[i % SEED_ARCHETYPES.length];
     ctx.db.fighterTemplate.insert({
-      id: 0, name, lore: lores[i % lores.length], archetype,
-      // All stats start at 0 — fighters grow through point spending after tournaments
+      id: 0, name, lore: SEED_LORES[i % SEED_LORES.length], archetype,
       strength: 0, speed: 0, intelligence: 0, luck: 0, charisma: 0,
       points: 0, totalPointsEarned: 0,
       wins: 0, tournamentsPlayed: 0, isUserCreated: false, ownerIdentity: undefined,
       avatarUrl: avatarUrlFor(name, archetype),
     });
   }
+}
+
+export const init = spacetimedb.init(ctx => {
+  seedFighters(ctx);
 });
+
+export const adminSeedFighters = spacetimedb.reducer(
+  { name: 'adminSeedFighters' },
+  {},
+  (ctx, _args) => {
+    const user = ctx.db.user.identity.find(ctx.sender);
+    if (!user) throw new SenderError('Not registered');
+    if (!user.isAdmin) throw new SenderError('Admin only');
+    seedFighters(ctx);
+  }
+);
 
 export const onConnect = spacetimedb.clientConnected(_ctx => { });
 export const onDisconnect = spacetimedb.clientDisconnected(_ctx => { });

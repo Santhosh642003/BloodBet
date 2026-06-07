@@ -28,8 +28,8 @@ function generateDecisions(tournamentId: number, tournamentFighters: any[], aren
 
 export function AdminPage() {
   const {
-    currentUser, tournaments, tournamentFighters, arenaTiles, users,
-    claimAdmin, setAdmin, adminCreateTournament, startTournament, advanceHour,
+    currentUser, tournaments, tournamentFighters, arenaTiles, users, fighters,
+    claimAdmin, setAdmin, adminCreateTournament, startTournament, advanceHour, adminSeedFighters,
   } = useDB();
   const { play } = useSound();
 
@@ -92,6 +92,25 @@ export function AdminPage() {
       </div>
 
       {error && <div className="bg-red-950/40 border border-red-500 text-red-400 font-mono text-xs px-4 py-3">{error}</div>}
+
+      {/* Fighter roster */}
+      <section className="bg-bg-secondary border border-separator p-6 space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="font-heading text-sm uppercase text-accent-gold tracking-wider">
+            Fighter Roster — {fighters.filter((f: any) => !f.isUserCreated).length} / 50 AI fighters
+          </h2>
+          <Button
+            variant="secondary"
+            disabled={busy === 'seed'}
+            onClick={() => run('seed', adminSeedFighters)}
+          >
+            {busy === 'seed' ? 'Seeding...' : '⚔️ Seed / Restore Fighters'}
+          </Button>
+        </div>
+        <p className="font-mono text-xs text-text-secondary">
+          Adds any missing AI fighters without overwriting existing ones. Safe to run after a republish.
+        </p>
+      </section>
 
       {/* Create tournament with custom rules */}
       <section className="bg-bg-secondary border border-separator p-6 space-y-4">

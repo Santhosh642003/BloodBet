@@ -280,6 +280,11 @@ export function useSpacetime() {
     return conn.reducers.adminCreateTournament({ name, arenaType, gridWidth, gridHeight });
   }, [conn]);
 
+  const adminSeedFighters = useCallback(() => {
+    if (!conn) return Promise.reject(new Error('Not connected to the arena yet'));
+    return conn.reducers.adminSeedFighters({});
+  }, [conn]);
+
   const startTournament = useCallback((tournamentId: number) => {
     if (!conn) return Promise.reject(new Error('Not connected to the arena yet'));
     return conn.reducers.startTournament({ tournamentId });
@@ -307,7 +312,7 @@ export function useSpacetime() {
     updateProfile, sendFriendRequest, respondToFriendRequest, removeFriend,
     markNotificationRead, markAllNotificationsRead,
     createEventBetSlip, joinEventBetSlip,
-    claimAdmin, setAdmin, adminCreateTournament, startTournament, advanceHour,
+    claimAdmin, setAdmin, adminCreateTournament, adminSeedFighters, startTournament, advanceHour,
     registerForTournament, unregisterFromTournament,
   };
 }

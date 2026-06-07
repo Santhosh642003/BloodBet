@@ -35,6 +35,7 @@ import {
 
 // Import all reducer arg schemas
 import AdminCreateTournamentReducer from "./admin_create_tournament_reducer";
+import AdminSeedFightersReducer from "./admin_seed_fighters_reducer";
 import AdvanceHourReducer from "./advance_hour_reducer";
 import ClaimAdminReducer from "./claim_admin_reducer";
 import CreateEventBetSlipReducer from "./create_event_bet_slip_reducer";
@@ -329,6 +330,7 @@ const tablesSchema = __schema({
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
   __reducerSchema("adminCreateTournament", AdminCreateTournamentReducer),
+  __reducerSchema("adminSeedFighters", AdminSeedFightersReducer),
   __reducerSchema("advanceHour", AdvanceHourReducer),
   __reducerSchema("claimAdmin", ClaimAdminReducer),
   __reducerSchema("createEventBetSlip", CreateEventBetSlipReducer),
