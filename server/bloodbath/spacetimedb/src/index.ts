@@ -528,7 +528,12 @@ export const startTournament = spacetimedb.reducer(
   { name: 'startTournament' },
   { tournamentId: t.u32() },
   (ctx, { tournamentId }) => {
-    requireAdmin(ctx);
+    // Allow: admin OR the tournament's own host (orchestrator creates + starts its own)
+    const caller = ctx.db.user.identity.find(ctx.sender);
+    const tournament0 = ctx.db.tournament.id.find(tournamentId);
+    const isAdmin = caller?.isAdmin ?? false;
+    const isHost  = tournament0?.hostIdentity?.toHexString() === ctx.sender.toHexString();
+    if (!isAdmin && !isHost) throw new SenderError('Admin or host required to start tournament');
     const tournament = ctx.db.tournament.id.find(tournamentId);
     if (!tournament || tournament.status !== 'UPCOMING') throw new SenderError('Tournament not found or not upcoming');
 
@@ -644,17 +649,68 @@ export const advanceHour = spacetimedb.reducer(
     let parsedDecisions: any[] = [];
     try { parsedDecisions = JSON.parse(decisions); } catch {}
 
+    // Pre-load all fighters and tiles for this tournament once
+    const allFighters = [...ctx.db.fighterTemplate.iter()];
+    const allTiles    = [...ctx.db.arenaTile.iter()]
+      .filter((t: any) => Number(t.tournamentId) === Number(tournamentId));
+
+    // Phase milestone events
+    const pct = alive.length / (allTf.length || 1);
+    if (alive.length === Math.floor(allTf.length * 0.5) || alive.length === 3 || alive.length === 2) {
+      const label = alive.length <= 2 ? '⚠️ FINAL DUEL' : alive.length === 3 ? '⚔️ FINAL THREE' : '🔔 HALF THE FIELD ELIMINATED';
+      ctx.db.liveEvent.insert({
+        id: 0, tournamentId, hour, eventType: 'PHASE',
+        description: `${label} — ${alive.length} fighters remain in the arena.`,
+        involvedIds: '[]', x: undefined, y: undefined, timestamp: ctx.timestamp,
+      });
+    }
+
+    // Night-time penalty: vision and morale drop
+    const isNight = (hour % 24) >= 20 || (hour % 24) < 6;
+
     for (const tf of alive) {
-      const fighter  = [...ctx.db.fighterTemplate.iter()].find((f: any) => Number(f.id) === Number(tf.fighterId));
+      const fighter  = allFighters.find((f: any) => Number(f.id) === Number(tf.fighterId));
       if (!fighter) continue;
       const decision = parsedDecisions.find((d: any) => Number(d.fighterId) === Number(tf.fighterId));
       const action   = decision?.action ?? 'HIDE';
       const targetId = Number(decision?.targetId ?? 0);
+      const reason   = (decision?.reasoning ?? '').slice(0, 120); // cap length
       let newTf      = { ...tf };
 
+      // ── Passive stat tick ───────────────────────────────────────────────────
       newTf.hunger  = clamp(Number(newTf.hunger)  + 3, 0, 100);
       newTf.thirst  = clamp(Number(newTf.thirst)  + 5, 0, 100);
-      newTf.fatigue = clamp(Number(newTf.fatigue) + 4, 0, 100);
+      newTf.fatigue = clamp(Number(newTf.fatigue) + (isNight ? 3 : 4), 0, 100);
+
+      // ── Tile environmental effects ──────────────────────────────────────────
+      const currentTile = allTiles.find((t: any) => Number(t.x) === Number(tf.x) && Number(t.y) === Number(tf.y));
+      const tileType    = currentTile?.tileType ?? 'PLAIN';
+      if (tileType === 'DANGER') {
+        // Volcanic/hazardous tiles deal passive injury
+        const hazardDmg = ctx.random.integerInRange(5, 18);
+        newTf.injury = clamp(Number(newTf.injury) + hazardDmg, 0, 100);
+        ctx.db.liveEvent.insert({
+          id: 0, tournamentId, hour, eventType: 'PHASE',
+          description: `${fighter.name} takes ${hazardDmg} damage from the hazardous terrain`,
+          involvedIds: JSON.stringify([tf.fighterId]),
+          x: Number(tf.x), y: Number(tf.y), timestamp: ctx.timestamp,
+        });
+      }
+      if (tileType === 'FOREST' && ctx.random() < 0.25) {
+        // Forest tiles occasionally yield food
+        const inv: string[] = JSON.parse(newTf.inventory);
+        inv.push('FOOD'); newTf.inventory = JSON.stringify(inv);
+        ctx.db.liveEvent.insert({
+          id: 0, tournamentId, hour, eventType: 'RESOURCE',
+          description: `${fighter.name} forages food from the forest`,
+          involvedIds: JSON.stringify([tf.fighterId]),
+          x: Number(tf.x), y: Number(tf.y), timestamp: ctx.timestamp,
+        });
+      }
+      if (tileType === 'WATER' && ctx.random() < 0.60) {
+        // Water tiles passively reduce thirst
+        newTf.thirst = clamp(Number(newTf.thirst) - 20, 0, 100);
+      }
 
       switch (action) {
         case 'MOVE': {
@@ -662,38 +718,35 @@ export const advanceHour = spacetimedb.reducer(
           const ny = clamp(Number(decision?.targetY ?? tf.y), 0, Number(tournament.gridHeight) - 1);
           newTf.x = nx; newTf.y = ny;
           newTf.fatigue = clamp(Number(newTf.fatigue) + 2, 0, 100);
-          const tile = [...ctx.db.arenaTile.iter()].find((t: any) =>
-            Number(t.tournamentId) === Number(tournamentId) && Number(t.x) === nx && Number(t.y) === ny
-          );
-          if (tile?.hasResource && tile.resourceType) {
+          const destTile = allTiles.find((t: any) => Number(t.x) === nx && Number(t.y) === ny);
+          if (destTile?.hasResource && destTile.resourceType) {
             const inv: string[] = JSON.parse(newTf.inventory);
-            inv.push(tile.resourceType);
+            inv.push(destTile.resourceType);
             newTf.inventory = JSON.stringify(inv);
-            ctx.db.arenaTile.id.update({ ...tile, hasResource: false, resourceType: undefined });
+            ctx.db.arenaTile.id.update({ ...destTile, hasResource: false, resourceType: undefined });
             ctx.db.liveEvent.insert({
               id: 0, tournamentId, hour, eventType: 'RESOURCE',
-              description: `${fighter.name} finds ${tile.resourceType} at (${nx},${ny})`,
+              description: `${fighter.name} picks up ${destTile.resourceType}${reason ? ` — "${reason}"` : ''}`,
+              involvedIds: JSON.stringify([tf.fighterId]), x: nx, y: ny, timestamp: ctx.timestamp,
+            });
+          } else {
+            ctx.db.liveEvent.insert({
+              id: 0, tournamentId, hour, eventType: 'MOVE',
+              description: `${fighter.name} moves to (${nx},${ny})${reason ? ` — "${reason}"` : ''}`,
               involvedIds: JSON.stringify([tf.fighterId]), x: nx, y: ny, timestamp: ctx.timestamp,
             });
           }
-          ctx.db.liveEvent.insert({
-            id: 0, tournamentId, hour, eventType: 'MOVE',
-            description: `${fighter.name} moves to (${nx},${ny})`,
-            involvedIds: JSON.stringify([tf.fighterId]), x: nx, y: ny, timestamp: ctx.timestamp,
-          });
           break;
         }
         case 'REST': {
-          const tile = [...ctx.db.arenaTile.iter()].find((t: any) =>
-            Number(t.tournamentId) === Number(tournamentId) &&
-            Number(t.x) === Number(tf.x) && Number(t.y) === Number(tf.y)
-          );
-          const isShelter = tile?.tileType === 'SHELTER';
-          newTf.fatigue = clamp(Number(newTf.fatigue) - (isShelter ? 20 : 10), 0, 100);
+          const isShelter = tileType === 'SHELTER';
+          const restGain  = isShelter ? 25 : 12;
+          newTf.fatigue = clamp(Number(newTf.fatigue) - restGain, 0, 100);
+          if (isShelter) newTf.injury = clamp(Number(newTf.injury) - 5, 0, 100); // shelter heals minor injury
           newTf.condition = 'RESTING';
           ctx.db.liveEvent.insert({
             id: 0, tournamentId, hour, eventType: 'PHASE',
-            description: `${fighter.name} rests ${isShelter ? 'in shelter' : 'in the open'}`,
+            description: `${fighter.name} rests ${isShelter ? 'in shelter (recovering fast)' : 'in the open'}${reason ? ` — "${reason}"` : ''}`,
             involvedIds: JSON.stringify([tf.fighterId]), x: Number(tf.x), y: Number(tf.y), timestamp: ctx.timestamp,
           });
           break;
@@ -704,38 +757,49 @@ export const advanceHour = spacetimedb.reducer(
           const idx  = inv.indexOf(item);
           if (idx >= 0) {
             inv.splice(idx, 1); newTf.inventory = JSON.stringify(inv);
-            if (item === 'FOOD')   newTf.hunger = clamp(Number(newTf.hunger) - 40, 0, 100);
-            if (item === 'WATER')  newTf.thirst = clamp(Number(newTf.thirst) - 50, 0, 100);
-            if (item === 'MEDKIT') newTf.injury = clamp(Number(newTf.injury) - 40, 0, 100);
+            if (item === 'FOOD')   { newTf.hunger = clamp(Number(newTf.hunger) - 45, 0, 100); }
+            if (item === 'WATER')  { newTf.thirst = clamp(Number(newTf.thirst) - 55, 0, 100); }
+            if (item === 'MEDKIT') { newTf.injury = clamp(Number(newTf.injury) - 45, 0, 100); }
+            ctx.db.liveEvent.insert({
+              id: 0, tournamentId, hour, eventType: 'PHASE',
+              description: `${fighter.name} consumes ${item}${reason ? ` — "${reason}"` : ''}`,
+              involvedIds: JSON.stringify([tf.fighterId]), x: Number(tf.x), y: Number(tf.y), timestamp: ctx.timestamp,
+            });
           }
           break;
         }
         case 'ATTACK': {
           const target     = alive.find((a: any) => Number(a.fighterId) === targetId);
-          const defFighter = target ? [...ctx.db.fighterTemplate.iter()].find((f: any) => Number(f.id) === Number(target.fighterId)) : null;
+          const defFighter = target ? allFighters.find((f: any) => Number(f.id) === Number(target.fighterId)) : null;
           if (target && defFighter) {
             const attInv       = JSON.parse(newTf.inventory);
             const defInv       = JSON.parse(target.inventory);
             const attHasWeapon = attInv.includes('WEAPON');
             const defHasArmor  = defInv.includes('ARMOR');
-            const attPower     = Number(fighter.strength) * 2 + (attHasWeapon ? 15 : 0);
-            const defPower     = Number(defFighter.strength) + Number(defFighter.speed) + (defHasArmor ? 15 : 0);
-            const roll         = (Number(fighter.id) * 7 + Number(defFighter.id) * 13 + hour * 3) % 100;
-            const attWins      = roll < (attPower / (attPower + defPower) * 100);
+            // True RNG combat — no longer deterministic
+            const attPower = Number(fighter.strength) * 2.5 + Number(fighter.luck) * 0.5 + (attHasWeapon ? 18 : 0) + Number(newTf.morale ?? 50) * 0.1;
+            const defPower = Number(defFighter.strength) + Number(defFighter.speed) * 1.2 + (defHasArmor ? 18 : 0) + Number(target.morale ?? 50) * 0.1 + Number(target.injury) * 0.05;
+            const winChance = attPower / (attPower + defPower);
+            const roll      = ctx.random(); // truly random each call
+            const attWins   = roll < winChance;
             if (attWins) {
               ctx.db.tournamentFighter.id.update({ ...target, isAlive: false, eliminatedHour: hour });
-              newTf.kills++;
+              newTf.kills = Number(newTf.kills) + 1;
+              newTf.morale = clamp(Number(newTf.morale ?? 50) + 15, 0, 100);
+              const weapon = attHasWeapon ? ' (armed)' : '';
               ctx.db.liveEvent.insert({
-                id: 0, tournamentId, hour, eventType: 'COMBAT',
-                description: `${fighter.name} eliminates ${defFighter.name}${attHasWeapon ? ' (armed)' : ''}`,
+                id: 0, tournamentId, hour, eventType: 'KILL',
+                description: `${fighter.name} eliminates ${defFighter.name}${weapon}${reason ? ` — "${reason}"` : ''}`,
                 involvedIds: JSON.stringify([tf.fighterId, target.fighterId]),
                 x: Number(tf.x), y: Number(tf.y), timestamp: ctx.timestamp,
               });
             } else {
-              newTf.injury = clamp(Number(newTf.injury) + 25, 0, 100);
+              const dmg = ctx.random.integerInRange(15, 35);
+              newTf.injury  = clamp(Number(newTf.injury) + dmg, 0, 100);
+              newTf.morale  = clamp(Number(newTf.morale ?? 50) - 10, 0, 100);
               ctx.db.liveEvent.insert({
                 id: 0, tournamentId, hour, eventType: 'COMBAT',
-                description: `${fighter.name} attacks ${defFighter.name} but is repelled`,
+                description: `${fighter.name} attacks ${defFighter.name} but is repelled, taking ${dmg} injury`,
                 involvedIds: JSON.stringify([tf.fighterId, target.fighterId]),
                 x: Number(tf.x), y: Number(tf.y), timestamp: ctx.timestamp,
               });
@@ -745,7 +809,7 @@ export const advanceHour = spacetimedb.reducer(
         }
         case 'ALLY': {
           const target     = alive.find((a: any) => Number(a.fighterId) === targetId);
-          const defFighter = target ? [...ctx.db.fighterTemplate.iter()].find((f: any) => Number(f.id) === Number(target.fighterId)) : null;
+          const defFighter = target ? allFighters.find((f: any) => Number(f.id) === Number(target.fighterId)) : null;
           if (target && defFighter) {
             const alliances: number[] = JSON.parse(newTf.alliances);
             if (!alliances.includes(targetId)) {
@@ -758,7 +822,7 @@ export const advanceHour = spacetimedb.reducer(
             }
             ctx.db.liveEvent.insert({
               id: 0, tournamentId, hour, eventType: 'ALLIANCE',
-              description: `${fighter.name} forms alliance with ${defFighter.name}`,
+              description: `${fighter.name} forges an alliance with ${defFighter.name}${reason ? ` — "${reason}"` : ''}`,
               involvedIds: JSON.stringify([tf.fighterId, targetId]),
               x: Number(tf.x), y: Number(tf.y), timestamp: ctx.timestamp,
             });
@@ -767,14 +831,23 @@ export const advanceHour = spacetimedb.reducer(
         }
         case 'BETRAY': {
           const target     = alive.find((a: any) => Number(a.fighterId) === targetId);
-          const defFighter = target ? [...ctx.db.fighterTemplate.iter()].find((f: any) => Number(f.id) === Number(target.fighterId)) : null;
+          const defFighter = target ? allFighters.find((f: any) => Number(f.id) === Number(target.fighterId)) : null;
           if (target && defFighter) {
             const alliances: number[] = JSON.parse(newTf.alliances);
             newTf.alliances = JSON.stringify(alliances.filter((id: number) => id !== targetId));
-            ctx.db.tournamentFighter.id.update({ ...target, injury: clamp(Number(target.injury) + 20, 0, 100) });
+            const betrayDmg = ctx.random.integerInRange(20, 40);
+            // Remove betrayer from target's alliances too
+            const tAlliances: number[] = JSON.parse(target.alliances).filter((id: number) => id !== Number(tf.fighterId));
+            ctx.db.tournamentFighter.id.update({
+              ...target,
+              injury: clamp(Number(target.injury) + betrayDmg, 0, 100),
+              alliances: JSON.stringify(tAlliances),
+              morale: clamp(Number(target.morale ?? 50) - 20, 0, 100),
+            });
+            newTf.morale = clamp(Number(newTf.morale ?? 50) + 5, 0, 100);
             ctx.db.liveEvent.insert({
-              id: 0, tournamentId, hour, eventType: 'BETRAY',
-              description: `${fighter.name} BETRAYS ${defFighter.name}!`,
+              id: 0, tournamentId, hour, eventType: 'BETRAYAL',
+              description: `${fighter.name} BETRAYS ${defFighter.name} for ${betrayDmg} damage!${reason ? ` — "${reason}"` : ''}`,
               involvedIds: JSON.stringify([tf.fighterId, targetId]),
               x: Number(tf.x), y: Number(tf.y), timestamp: ctx.timestamp,
             });
@@ -783,9 +856,10 @@ export const advanceHour = spacetimedb.reducer(
         }
         case 'HIDE': {
           newTf.condition = 'HIDDEN';
+          newTf.fatigue   = clamp(Number(newTf.fatigue) - 3, 0, 100); // hiding is restful
           ctx.db.liveEvent.insert({
             id: 0, tournamentId, hour, eventType: 'PHASE',
-            description: `${fighter.name} conceals themselves`,
+            description: `${fighter.name} goes dark${reason ? ` — "${reason}"` : ''}`,
             involvedIds: JSON.stringify([tf.fighterId]),
             x: Number(tf.x), y: Number(tf.y), timestamp: ctx.timestamp,
           });
@@ -796,9 +870,11 @@ export const advanceHour = spacetimedb.reducer(
       if (newTf.condition !== 'RESTING' && newTf.condition !== 'HIDDEN') {
         newTf.condition = getCondition(Number(newTf.hunger), Number(newTf.thirst), Number(newTf.fatigue), Number(newTf.injury));
       }
+
+      // Natural death checks
       if (Number(newTf.hunger) >= 100 || Number(newTf.thirst) >= 100 || Number(newTf.injury) >= 100) {
         newTf.isAlive = false; newTf.eliminatedHour = hour;
-        const cause = Number(newTf.hunger) >= 100 ? 'starvation' : Number(newTf.thirst) >= 100 ? 'dehydration' : 'injuries';
+        const cause = Number(newTf.hunger) >= 100 ? 'starvation' : Number(newTf.thirst) >= 100 ? 'dehydration' : 'fatal injuries';
         ctx.db.liveEvent.insert({
           id: 0, tournamentId, hour, eventType: 'ELIMINATION',
           description: `${fighter.name} is eliminated by ${cause}`,
