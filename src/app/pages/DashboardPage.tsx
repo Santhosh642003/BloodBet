@@ -10,20 +10,17 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const {
     currentUser, connected, fighters, tournaments,
-    bets, identity,
+    bets, identity, subscriptionReady, loginPending,
   } = useDB();
 
-  // Redirect to login if not connected or not registered.
-  // Give the user-row subscription a moment to arrive after a fresh
-  // register/login — otherwise we bounce straight back to /login before
-  // `currentUser` has a chance to populate.
+  // Redirect to login only after the initial subscription has loaded AND
+  // we're not in the middle of a login (loginPending stays true until the
+  // user row arrives via the subscription, preventing a false redirect).
   useEffect(() => {
-    if (!(connected && !currentUser && identity)) return;
-    const t = setTimeout(() => {
-      navigate('/login');
-    }, 2500);
-    return () => clearTimeout(t);
-  }, [connected, currentUser, identity, navigate]);
+    if (!subscriptionReady || loginPending || currentUser) return;
+    if (!identity) return;
+    navigate('/login');
+  }, [subscriptionReady, loginPending, currentUser, identity, navigate]);
 
   const balance      = currentUser?.balance ?? 0;
   const username     = currentUser?.username ?? '...';

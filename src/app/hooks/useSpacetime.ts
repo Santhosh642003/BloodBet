@@ -21,6 +21,8 @@ export function useSpacetime() {
   const [conn, setConn]                             = useState<DbConnection | null>(null);
   const [identity, setIdentity]                     = useState<string | null>(null);
   const [connected, setConnected]                   = useState(false);
+  const [subscriptionReady, setSubscriptionReady]   = useState(false);
+  const [loginPending, setLoginPending]             = useState(false);
   const [currentUser, setCurrentUser]               = useState<any | null>(null);
   const [fighters, setFighters]                     = useState<any[]>([]);
   const [tournaments, setTournaments]               = useState<any[]>([]);
@@ -67,6 +69,7 @@ export function useSpacetime() {
             setFriendships(normalizeAll(ctx.db.friendship.iter()));
             setNotifications(normalizeAll(ctx.db.notification.iter()).filter(n => n.recipientId?.toHexString?.() === id.toHexString()));
             setEventBetSlips(normalizeAll(ctx.db.eventBetSlip.iter()));
+            setSubscriptionReady(true);
             setEventBetPositions(normalizeAll(ctx.db.eventBetPosition.iter()));
             setTournamentRegistrations(normalizeAll(ctx.db.tournamentRegistration.iter()));
 
@@ -130,11 +133,17 @@ export function useSpacetime() {
         ctx.db.tournamentRegistration.onDelete(refreshRegs);
         ctx.db.user.onInsert((_ctx: EventContext, row: any) => {
           setUsers(normalizeAll(ctx.db.user.iter()));
-          if (row.identity.toHexString() === id.toHexString()) setCurrentUser(normalize(row));
+          if (row.identity.toHexString() === id.toHexString()) {
+            setCurrentUser(normalize(row));
+            setLoginPending(false);
+          }
         });
         ctx.db.user.onUpdate((_ctx: EventContext, _old: any, row: any) => {
           setUsers(normalizeAll(ctx.db.user.iter()));
-          if (row.identity.toHexString() === id.toHexString()) setCurrentUser(normalize(row));
+          if (row.identity.toHexString() === id.toHexString()) {
+            setCurrentUser(normalize(row));
+            setLoginPending(false);
+          }
         });
       })
       .onDisconnect(() => setConnected(false))
@@ -147,7 +156,11 @@ export function useSpacetime() {
 
   const register = useCallback((username: string, email: string, passwordHash: string) => {
     if (!conn) return Promise.reject(new Error('Not connected to the arena yet'));
-    return conn.reducers.registerUser({ username, email, passwordHash });
+    setLoginPending(true);
+    return conn.reducers.registerUser({ username, email, passwordHash }).catch((e: any) => {
+      setLoginPending(false);
+      throw e;
+    });
   }, [conn]);
 
   const updateAccount = useCallback((username: string) => {
@@ -157,7 +170,11 @@ export function useSpacetime() {
 
   const verifyLogin = useCallback((usernameOrEmail: string, passwordHash: string) => {
     if (!conn) return Promise.reject(new Error('Not connected to the arena yet'));
-    return conn.reducers.verifyLogin({ usernameOrEmail, passwordHash });
+    setLoginPending(true);
+    return conn.reducers.verifyLogin({ usernameOrEmail, passwordHash }).catch((e: any) => {
+      setLoginPending(false);
+      throw e;
+    });
   }, [conn]);
 
   const placeBet = useCallback((tournamentId: number, fighterId: number, betType: string, amount: number) => {
@@ -280,7 +297,7 @@ export function useSpacetime() {
   }, []);
 
   return {
-    conn, identity, connected, currentUser,
+    conn, identity, connected, currentUser, subscriptionReady, loginPending,
     fighters, tournaments, tournamentFighters, arenaTiles,
     bets, liveEvents, sponsorDrops, contracts, auctionBids, auctions, users, friendships, notifications,
     eventBetSlips, eventBetPositions,
