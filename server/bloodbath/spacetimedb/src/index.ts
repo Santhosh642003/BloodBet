@@ -1245,12 +1245,11 @@ export const resetFighterStats = spacetimedb.reducer(
   }
 );
 
-// Admin: reset all fighter avatars back to DiceBear SVGs
+// Reset all fighter avatars back to DiceBear SVGs (open — avatars are not sensitive)
 export const resetAvatars = spacetimedb.reducer(
   { name: 'resetAvatars' },
   {},
   (ctx, _args) => {
-    requireAdmin(ctx);
     for (const f of [...ctx.db.fighterTemplate.iter()]) {
       ctx.db.fighterTemplate.id.update({ ...f, avatarUrl: avatarUrlFor(String(f.name), String(f.archetype)) });
     }
