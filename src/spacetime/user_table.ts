@@ -22,4 +22,5 @@ export default __t.row({
   bio: __t.string(),
   avatarEmoji: __t.string().name("avatar_emoji"),
   favoriteArchetype: __t.string().name("favorite_archetype"),
+  isAdmin: __t.bool().name("is_admin"),
 });

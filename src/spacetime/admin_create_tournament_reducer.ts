@@ -11,5 +11,8 @@ import {
 } from "spacetimedb";
 
 export default {
-  tournamentId: __t.u32(),
+  name: __t.string(),
+  arenaType: __t.string(),
+  gridWidth: __t.u32(),
+  gridHeight: __t.u32(),
 };

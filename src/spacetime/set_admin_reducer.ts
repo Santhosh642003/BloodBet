@@ -11,5 +11,6 @@ import {
 } from "spacetimedb";
 
 export default {
-  tournamentId: __t.u32(),
+  targetIdentity: __t.identity(),
+  isAdmin: __t.bool(),
 };

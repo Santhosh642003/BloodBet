@@ -25,6 +25,7 @@ export function NavBar() {
 
   const balance  = Number(currentUser?.balance ?? 0).toFixed(2);
   const username = currentUser?.username ?? '...';
+  const navLinks = currentUser?.isAdmin ? [...NAV_LINKS, { label: 'Admin', path: '/admin' }] : NAV_LINKS;
 
   return (
     <nav className="bg-bg-primary border-b border-separator sticky top-0 z-50 px-6 py-4">
@@ -40,7 +41,7 @@ export function NavBar() {
 
         {/* Desktop Nav */}
         <div className="hidden md:flex items-center gap-6 font-heading text-sm uppercase">
-          {NAV_LINKS.map(link => (
+          {navLinks.map(link => (
             <button
               key={link.path}
               onClick={() => navigate(link.path)}
@@ -101,7 +102,7 @@ export function NavBar() {
       {/* Mobile Menu */}
       {menuOpen && (
         <div className="md:hidden mt-4 border-t border-separator pt-4 flex flex-col gap-3">
-          {NAV_LINKS.map(link => (
+          {navLinks.map(link => (
             <button
               key={link.path}
               onClick={() => { navigate(link.path); setMenuOpen(false); }}

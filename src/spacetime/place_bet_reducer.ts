@@ -11,6 +11,7 @@ import {
 } from "spacetimedb";
 
 export default {
+  tournamentId: __t.u32(),
   fighterId: __t.u32(),
   betType: __t.string(),
   amount: __t.f64(),

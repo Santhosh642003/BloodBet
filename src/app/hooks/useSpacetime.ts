@@ -36,6 +36,7 @@ export function useSpacetime() {
   const [notifications, setNotifications]           = useState<any[]>([]);
   const [eventBetSlips, setEventBetSlips]           = useState<any[]>([]);
   const [eventBetPositions, setEventBetPositions]   = useState<any[]>([]);
+  const [tournamentRegistrations, setTournamentRegistrations] = useState<any[]>([]);
 
   useEffect(() => {
     const token = localStorage.getItem('spacetime_token') ?? undefined;
@@ -65,6 +66,7 @@ export function useSpacetime() {
             setNotifications(normalizeAll(ctx.db.notification.iter()).filter(n => n.recipientId?.toHexString?.() === id.toHexString()));
             setEventBetSlips(normalizeAll(ctx.db.eventBetSlip.iter()));
             setEventBetPositions(normalizeAll(ctx.db.eventBetPosition.iter()));
+            setTournamentRegistrations(normalizeAll(ctx.db.tournamentRegistration.iter()));
 
             const me = ctx.db.user.identity.find(id);
             if (me) setCurrentUser(normalize(me));
@@ -84,6 +86,7 @@ export function useSpacetime() {
             tables.notification,
             tables.eventBetSlip,
             tables.eventBetPosition,
+            tables.tournamentRegistration,
           ]);
 
         ctx.db.fighterTemplate.onInsert(()   => setFighters(normalizeAll(ctx.db.fighterTemplate.iter())));
@@ -115,6 +118,10 @@ export function useSpacetime() {
         ctx.db.notification.onInsert(refreshNotifications);
         ctx.db.notification.onUpdate(refreshNotifications);
         ctx.db.notification.onDelete(refreshNotifications);
+        const refreshRegs = () => setTournamentRegistrations(normalizeAll(ctx.db.tournamentRegistration.iter()));
+        ctx.db.tournamentRegistration.onInsert(refreshRegs);
+        ctx.db.tournamentRegistration.onUpdate(refreshRegs);
+        ctx.db.tournamentRegistration.onDelete(refreshRegs);
         ctx.db.user.onInsert((_ctx: EventContext, row: any) => {
           setUsers(normalizeAll(ctx.db.user.iter()));
           if (row.identity.toHexString() === id.toHexString()) setCurrentUser(normalize(row));
@@ -147,8 +154,18 @@ export function useSpacetime() {
     return conn.reducers.verifyLogin({ usernameOrEmail, passwordHash });
   }, [conn]);
 
-  const placeBet = useCallback((fighterId: number, betType: string, amount: number) => {
-    conn?.reducers.placeBet({ fighterId, betType, amount });
+  const placeBet = useCallback((tournamentId: number, fighterId: number, betType: string, amount: number) => {
+    conn?.reducers.placeBet({ tournamentId, fighterId, betType, amount });
+  }, [conn]);
+
+  const registerForTournament = useCallback((tournamentId: number) => {
+    if (!conn) return Promise.reject(new Error('Not connected'));
+    return conn.reducers.registerForTournament({ tournamentId });
+  }, [conn]);
+
+  const unregisterFromTournament = useCallback((tournamentId: number) => {
+    if (!conn) return Promise.reject(new Error('Not connected'));
+    return conn.reducers.unregisterFromTournament({ tournamentId });
   }, [conn]);
 
   const createEventBetSlip = useCallback((tournamentId: number, fighter1Id: number, action: string, fighter2Id: number, roundsDuration: number, side: string, amount: number) => {
@@ -213,6 +230,31 @@ export function useSpacetime() {
     return conn.reducers.markAllNotificationsRead({});
   }, [conn]);
 
+  const claimAdmin = useCallback(() => {
+    if (!conn) return Promise.reject(new Error('Not connected to the arena yet'));
+    return conn.reducers.claimAdmin({});
+  }, [conn]);
+
+  const setAdmin = useCallback((targetIdentity: any, isAdmin: boolean) => {
+    if (!conn) return Promise.reject(new Error('Not connected to the arena yet'));
+    return conn.reducers.setAdmin({ targetIdentity, isAdmin });
+  }, [conn]);
+
+  const adminCreateTournament = useCallback((name: string, arenaType: string, gridWidth: number, gridHeight: number) => {
+    if (!conn) return Promise.reject(new Error('Not connected to the arena yet'));
+    return conn.reducers.adminCreateTournament({ name, arenaType, gridWidth, gridHeight });
+  }, [conn]);
+
+  const startTournament = useCallback((tournamentId: number) => {
+    if (!conn) return Promise.reject(new Error('Not connected to the arena yet'));
+    return conn.reducers.startTournament({ tournamentId });
+  }, [conn]);
+
+  const advanceHour = useCallback((tournamentId: number, decisions: string) => {
+    if (!conn) return Promise.reject(new Error('Not connected to the arena yet'));
+    return conn.reducers.advanceHour({ tournamentId, decisions });
+  }, [conn]);
+
   const logout = useCallback(() => {
     localStorage.removeItem('spacetime_token');
     setCurrentUser(null);
@@ -224,10 +266,13 @@ export function useSpacetime() {
     fighters, tournaments, tournamentFighters, arenaTiles,
     bets, liveEvents, sponsorDrops, contracts, auctionBids, users, friendships, notifications,
     eventBetSlips, eventBetPositions,
+    tournamentRegistrations,
     register, verifyLogin, updateAccount, placeBet, sponsorFighter,
     createTournament, createFighter, hostTournament, placeBid, logout,
     updateProfile, sendFriendRequest, respondToFriendRequest, removeFriend,
     markNotificationRead, markAllNotificationsRead,
     createEventBetSlip, joinEventBetSlip,
+    claimAdmin, setAdmin, adminCreateTournament, startTournament, advanceHour,
+    registerForTournament, unregisterFromTournament,
   };
 }

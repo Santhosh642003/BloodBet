@@ -87,10 +87,13 @@ export const FighterTemplate = __t.object("FighterTemplate", {
   intelligence: __t.u8(),
   luck: __t.u8(),
   charisma: __t.u8(),
+  points: __t.u32(),
+  totalPointsEarned: __t.u32(),
   wins: __t.u32(),
   tournamentsPlayed: __t.u32(),
   isUserCreated: __t.bool(),
   ownerIdentity: __t.option(__t.identity()),
+  avatarUrl: __t.string(),
 });
 export type FighterTemplate = __Infer<typeof FighterTemplate>;
 
@@ -178,6 +181,15 @@ export const TournamentFighter = __t.object("TournamentFighter", {
 });
 export type TournamentFighter = __Infer<typeof TournamentFighter>;
 
+export const TournamentRegistration = __t.object("TournamentRegistration", {
+  id: __t.u32(),
+  tournamentId: __t.u32(),
+  userId: __t.identity(),
+  role: __t.string(),
+  registeredAt: __t.timestamp(),
+});
+export type TournamentRegistration = __Infer<typeof TournamentRegistration>;
+
 export const User = __t.object("User", {
   identity: __t.identity(),
   username: __t.string(),
@@ -190,6 +202,7 @@ export const User = __t.object("User", {
   bio: __t.string(),
   avatarEmoji: __t.string(),
   favoriteArchetype: __t.string(),
+  isAdmin: __t.bool(),
 });
 export type User = __Infer<typeof User>;
 

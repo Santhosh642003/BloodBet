@@ -40,6 +40,7 @@ export function FightersPage() {
       },
       survivalOdds: 70,
       winOdds: `${(12.4 / (wins + 1)).toFixed(1)}x`,
+      avatar: fighter.avatarUrl || undefined,
       winRate,
       tournaments,
       wins,

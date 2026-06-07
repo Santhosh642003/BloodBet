@@ -12,6 +12,7 @@ import { ProfilePage } from './pages/ProfilePage';
 import { PlayersPage } from './pages/PlayersPage';
 import { TournamentHistoryPage } from './pages/TournamentHistoryPage';
 import { TournamentSummaryPage } from './pages/TournamentSummaryPage';
+import { AdminPage } from './pages/AdminPage';
 
 export default function App() {
   return (
@@ -30,6 +31,7 @@ export default function App() {
         <Route path="/players" element={<PlayersPage />} />
         <Route path="/tournament-history" element={<TournamentHistoryPage />} />
         <Route path="/tournament-summary/:id" element={<TournamentSummaryPage />} />
+        <Route path="/admin" element={<AdminPage />} />
       </Routes>
     </BrowserRouter>
   );

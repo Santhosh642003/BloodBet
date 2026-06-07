@@ -20,8 +20,11 @@ export default __t.row({
   intelligence: __t.u8(),
   luck: __t.u8(),
   charisma: __t.u8(),
+  points: __t.u32(),
+  totalPointsEarned: __t.u32().name("total_points_earned"),
   wins: __t.u32(),
   tournamentsPlayed: __t.u32().name("tournaments_played"),
   isUserCreated: __t.bool().name("is_user_created"),
   ownerIdentity: __t.option(__t.identity()).name("owner_identity"),
+  avatarUrl: __t.string().name("avatar_url"),
 });

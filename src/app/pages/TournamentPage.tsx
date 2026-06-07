@@ -6,482 +6,658 @@ import { EventBetsPanel } from '../components/EventBetsPanel';
 import { Button } from '../components/Button';
 import { NavBar } from '../components/NavBar';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Clock, Sword, Users, Zap, Eye, Trophy } from 'lucide-react';
+import {
+  Clock, Sword, Users, Eye, Trophy, UserPlus, UserCheck,
+  ChevronDown, ChevronUp, Wallet, Zap,
+} from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { useDB } from '../context/SpacetimeContext';
 import { useSound } from '../context/SoundContext';
 
 const BET_TYPES = [
-  { key: 'WIN',              label: 'Wins Tournament',    odds: 12.4 },
-  { key: 'SURVIVES_ROUND_1', label: 'Survives Round 1',   odds: 1.4  },
-  { key: 'DIES_FIRST',       label: 'Dies First',          odds: 22.0 },
-  { key: 'KILLS_3_PLUS',     label: 'Kills 3+ Opponents', odds: 5.0  },
+  { key: 'WIN',          label: 'Wins Tournament',   odds: 12.4 },
+  { key: 'SURVIVES_DAY_1',  label: 'Survives Round 1',   odds: 1.4  },
+  { key: 'DIES_FIRST',      label: 'Dies First',          odds: 22.0 },
+  { key: 'MOST_KILLS',      label: 'Kills 3+ Opponents', odds: 5.0  },
   { key: 'FORMS_ALLIANCE',   label: 'Forms Alliance',      odds: 2.1  },
 ];
 
 const EVENT_ICONS: Record<string, string> = {
-  KILL:     '⚔️',
-  ALLIANCE: '🤝',
-  BETRAYAL: '🗡️',
-  FLEE:     '💨',
-  TRAP:     '⚠️',
+  KILL: '⚔️', ALLIANCE: '🤝', BETRAYAL: '🗡️', FLEE: '💨', TRAP: '⚠️', PHASE: '📢',
 };
 
-const BETTING_WINDOW_MS = 30 * 60 * 1000;
+const STATUS_COLORS: Record<string, string> = {
+  UPCOMING: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30',
+  LIVE:      'text-red-400 bg-red-500/10 border-red-500/30',
+  COMPLETED:'text-text-secondary bg-separator/10 border-separator',
+};
 
-function timestampToMs(ts: any): number {
+function timeAgoMs(ts: any): string {
   const micros = ts?.microsSinceUnixEpoch;
-  return micros !== undefined ? Number(micros) / 1000 : 0;
+  if (!micros) return '';
+  const diffMs = Date.now() - Number(micros) / 1000;
+  const m = Math.floor(diffMs / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  return `${Math.floor(m / 60)}h ago`;
 }
 
-function formatCountdown(ms: number): string {
-  if (ms <= 0) return '00:00';
-  const totalSeconds = Math.floor(ms / 1000);
-  const m = Math.floor(totalSeconds / 60);
-  const s = totalSeconds % 60;
+function useNow() {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return now;
+}
+
+// Rename windowMs to avoid duplicate naming collisions if needed
+function countdown(createdAtTs: any, now: number, windowMs = 30 * 60 * 1000): string {
+  const micros = createdAtTs?.microsSinceUnixEpoch;
+  if (!micros) return '--:--';
+  const end = Number(micros) / 1000 + windowMs;
+  const rem = Math.max(0, end - now);
+  const m = Math.floor(rem / 60000);
+  const s = Math.floor((rem % 60000) / 1000);
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-function useCountdown(targetMs: number | null): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (targetMs === null) return;
-    const interval = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(interval);
-  }, [targetMs]);
-  return targetMs === null ? 0 : Math.max(0, targetMs - now);
-}
+// ─── Single tournament card (expanded view) ──────────────────────────────────
 
-export function TournamentPage() {
-  const navigate   = useNavigate();
-  const {
-    currentUser, tournaments, fighters, tournamentFighters, arenaTiles, bets, liveEvents,
-    placeBet, identity,
-  } = useDB();
+// Note: If 'activeTournament' or 'filteredEvents' from the betting branch 
+// are missing from props, make sure they are derived or destructured here.
+function TournamentCard({
+  tournament, fighters, tournamentFighters, arenaTiles, bets, liveEvents,
+  registrations, users, currentUser, identity, registerForTournament, unregisterFromTournament,
+  placeBet, defaultExpanded, activeTournament, filteredEvents = [],
+}: any) {
   const { play } = useSound();
+  const navigate = useNavigate();
+  const now = useNow();
 
-  const [selectedFighterId, setSelectedFighterId] = useState<number | null>(null);
-  const [selectedBetType,   setSelectedBetType]   = useState<string>('WIN');
-  const [betAmount,         setBetAmount]          = useState('');
-  const [betError,          setBetError]           = useState('');
-  const [betSuccess,        setBetSuccess]         = useState('');
+  const tid = Number(tournament.id);
+  const isLive     = tournament.status === 'LIVE';
+  const isUpcoming = tournament.status === 'UPCOMING';
+  const isCompleted= tournament.status === 'COMPLETED';
 
-  // Active tournament — prefer LIVE, fall back to UPCOMING
-  const liveTournament     = tournaments.find(t => t.status === 'LIVE');
-  const upcomingTournament = tournaments.find(t => t.status === 'UPCOMING');
-  const activeTournament   = liveTournament ?? upcomingTournament;
+  const [expanded,        setExpanded]        = useState(defaultExpanded);
+  const [selectedFighter, setSelectedFighter] = useState<any>(null);
+  const [selectedBetType, setSelectedBetType] = useState('WIN');
+  const [betAmount,        setBetAmount]        = useState('');
+  const [betError,        setBetError]         = useState('');
+  const [betSuccess,      setBetSuccess]       = useState('');
+  const [regBusy,          setRegBusy]          = useState(false);
 
-  // Cinematic intro: play once when a tournament we're watching goes UPCOMING -> LIVE
-  const [introTournamentId, setIntroTournamentId] = useState<number | null>(null);
-  const [seenIntroFor, setSeenIntroFor]           = useState<Set<number>>(new Set());
+  // Cinematic intro
+  const [showIntro, setShowIntro] = useState(false);
+  const [seenIntro, setSeenIntro] = useState(false);
   useEffect(() => {
-    if (liveTournament) {
-      const lid = Number(liveTournament.id);
-      if (Number(liveTournament.currentHour ?? 0) <= 1 && !seenIntroFor.has(lid)) {
-        setIntroTournamentId(lid);
-        setSeenIntroFor(prev => new Set(prev).add(lid));
-      }
+    if (isLive && !seenIntro && Number(tournament.currentHour ?? 0) <= 1) {
+      setShowIntro(true);
+      setSeenIntro(true);
     }
-  }, [liveTournament?.id, liveTournament?.currentHour]);
+  }, [isLive]);
 
-  // When the tournament we were watching wraps up, send the user to its summary page
-  const [lastSeenLiveId, setLastSeenLiveId] = useState<number | null>(null);
+  // Redirect to summary when completed while we were watching
+  const [wasLive, setWasLive] = useState(isLive);
+  useEffect(() => { if (isLive) setWasLive(true); }, [isLive]);
   useEffect(() => {
-    if (liveTournament) setLastSeenLiveId(Number(liveTournament.id));
-  }, [liveTournament?.id]);
-  useEffect(() => {
-    if (!liveTournament && lastSeenLiveId !== null) {
-      const justEnded = tournaments.find(t => Number(t.id) === lastSeenLiveId && t.status === 'COMPLETED');
-      if (justEnded) {
-        navigate(`/tournament-summary/${lastSeenLiveId}`);
-        setLastSeenLiveId(null);
-      }
-    }
-  }, [liveTournament, lastSeenLiveId, tournaments, navigate]);
+    if (wasLive && isCompleted) navigate(`/tournament-summary/${tid}`);
+  }, [wasLive, isCompleted]);
 
-  // Countdown to betting close / tournament start (UPCOMING tournaments only)
-  const countdownTarget = activeTournament?.status === 'UPCOMING'
-    ? timestampToMs(activeTournament.createdAt) + BETTING_WINDOW_MS
-    : null;
-  const countdownMs = useCountdown(countdownTarget);
+  const roster = tournamentFighters
+    .filter((tf: any) => Number(tf.tournamentId) === tid)
+    .map((tf: any) => ({ tf, fighter: fighters.find((f: any) => Number(f.id) === Number(tf.fighterId)) ?? null }))
+    .filter((e: any) => e.fighter !== null);
 
-  // Roster entries actually participating in this tournament (joined w/ live state)
-  const rosterEntries = activeTournament
-    ? tournamentFighters
-        .filter(tf => Number(tf.tournamentId) === Number(activeTournament.id))
-        .map(tf => ({
-          tf,
-          fighter: fighters.find(f => Number(f.id) === Number(tf.fighterId)) ?? null,
-        }))
-        .filter(entry => entry.fighter !== null)
-    : [];
+  const displayFighters = isLive
+    ? roster
+    : fighters.map((f: any) => ({ tf: null, fighter: f }));
 
-  // For LIVE tournaments, show only the fighters actually competing.
-  // For UPCOMING (no roster assigned yet), show the full pool to bet on.
-  const displayFighters = activeTournament?.status === 'LIVE'
-    ? rosterEntries
-    : fighters.map(fighter => ({ tf: null as any, fighter }));
+  const aliveCount = roster.filter((e: any) => e.tf.isAlive).length;
+  const tiles       = arenaTiles.filter((t: any) => Number(t.tournamentId) === tid);
+  const events      = liveEvents
+    .filter((e: any) => Number(e.tournamentId) === tid)
+    .sort((a: any, b: any) => Number(b.id) - Number(a.id))
+    .slice(0, 25);
 
-  const aliveCount = rosterEntries.filter(e => e.tf.isAlive).length;
+  const myBets = bets.filter((b: any) =>
+    Number(b.tournamentId) === tid && b.userId?.toHexString?.() === identity
+  );
+  const allBets = bets.filter((b: any) => Number(b.tournamentId) === tid);
 
-  // Live events for active tournament
-  const filteredEvents  = liveEvents
-    .filter(e => activeTournament && Number(e.tournamentId) === Number(activeTournament.id))
-    .sort((a, b) => Number(b.id) - Number(a.id))
-    .slice(0, 20);
+  const myReg = registrations.find((r: any) =>
+    Number(r.tournamentId) === tid && r.userId?.toHexString?.() === identity
+  );
+  const regList = registrations.filter((r: any) => Number(r.tournamentId) === tid);
+  const bettorCount = regList.filter((r: any) => r.role === 'BETTOR').length;
+  const viewerCount = regList.filter((r: any) => r.role === 'VIEWER').length;
 
-  // My bets on this tournament
-  const myTournamentBets = bets.filter(b =>
-    activeTournament && Number(b.tournamentId) === Number(activeTournament.id) &&
-    b.userId?.toHexString() === identity
+  const hostUser = users.find((u: any) =>
+    tournament.hostIdentity && u.identity?.toHexString?.() === tournament.hostIdentity?.toHexString?.()
   );
 
-  const selectedFighter = selectedFighterId !== null
-    ? fighters.find(f => Number(f.id) === selectedFighterId) ?? null
-    : null;
+  const handleRegister = async () => {
+    setRegBusy(true);
+    try {
+      if (myReg) {
+        await unregisterFromTournament(tid);
+      } else {
+        await registerForTournament(tid);
+      }
+      play('click');
+    } catch { play('error'); }
+    finally { setRegBusy(false); }
+  };
 
   const handlePlaceBet = () => {
     setBetError('');
     setBetSuccess('');
-
-    if (!activeTournament) { setBetError('No active tournament.'); return; }
-    if (!currentUser)       { setBetError('You must be logged in.'); return; }
-    if (!selectedFighter)   { setBetError('Select a fighter first.'); return; }
+    if (!selectedFighter) { setBetError('Select a fighter.'); return; }
     if (!betAmount || isNaN(Number(betAmount)) || Number(betAmount) <= 0) {
       setBetError('Enter a valid amount.'); return;
     }
-    if (Number(betAmount) > currentUser.balance) {
-      setBetError(`Insufficient funds. Balance: $${currentUser.balance.toFixed(2)}`); return;
+    if (Number(betAmount) > (currentUser?.balance ?? 0)) {
+      setBetError(`Insufficient funds ($${(currentUser?.balance ?? 0).toFixed(2)})`); return;
     }
-    if (activeTournament.status !== 'UPCOMING') {
-      setBetError('Betting is only open for upcoming tournaments.'); return;
-    }
-
     play('bet');
-    placeBet(
-      Number(selectedFighter.id),
-      selectedBetType,
-      Number(betAmount)
-    );
-
+    placeBet(tid, Number(selectedFighter.id), selectedBetType, Number(betAmount));
     const odds = BET_TYPES.find(b => b.key === selectedBetType)?.odds ?? 2;
-    setBetSuccess(`Bet placed! $${betAmount} on ${selectedFighter.name} · ${selectedBetType.replace(/_/g, ' ')} · Potential: $${(Number(betAmount) * odds).toFixed(2)}`);
+    setBetSuccess(`Bet placed! $${betAmount} on ${selectedFighter.name} · Potential: $${(Number(betAmount) * odds).toFixed(2)}`);
     setBetAmount('');
-    setTimeout(() => {
-      setSelectedFighterId(null);
-      setBetSuccess('');
-    }, 2000);
+    setTimeout(() => { setSelectedFighter(null); setBetSuccess(''); }, 2500);
   };
 
-  const introTournament = introTournamentId !== null
-    ? tournaments.find(t => Number(t.id) === introTournamentId)
-    : null;
-
   return (
-    <div className="min-h-screen bg-bg-primary">
-      {introTournament && (
+    <motion.div layout className="border border-separator bg-bg-secondary overflow-hidden">
+      {showIntro && (
         <CinematicIntro
-          tournamentName={introTournament.name}
-          arenaType={introTournament.arenaType}
-          fighterCount={tournamentFighters.filter(tf => Number(tf.tournamentId) === introTournamentId).length}
-          onFinish={() => setIntroTournamentId(null)}
+          tournamentName={tournament.name}
+          arenaType={tournament.arenaType}
+          fighterCount={roster.length}
+          onFinish={() => setShowIntro(false)}
         />
       )}
-      <NavBar />
 
-      <div className="max-w-7xl mx-auto p-6">
-        {/* Tournament Header */}
-        {activeTournament ? (
-          <div className="mb-8 border-b border-separator pb-8">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-              <div>
-                <h1 className="text-5xl mb-2 uppercase">{activeTournament.name || 'TOURNAMENT'}</h1>
-                <div className="font-heading text-lg text-text-secondary uppercase">
-                  {activeTournament.arenaType}
-                </div>
-              </div>
-              <div className="flex items-center gap-6">
-                {activeTournament.status === 'LIVE' ? (
-                  <div className="text-center">
-                    <div className="font-mono text-text-secondary text-xs uppercase mb-1">Hour</div>
-                    <div className="font-display text-3xl text-accent-gold">
-                      {Number(activeTournament.currentHour ?? 0)}
-                    </div>
-                  </div>
-                ) : activeTournament.status === 'UPCOMING' ? (
-                  <div className="text-center">
-                    <div className="font-mono text-text-secondary text-xs uppercase mb-1 flex items-center gap-1 justify-center">
-                      <Clock className="w-3 h-3" /> Starts In
-                    </div>
-                    <div className="font-display text-3xl text-accent-gold tabular-nums">
-                      {formatCountdown(countdownMs)}
-                    </div>
-                  </div>
-                ) : null}
-                <div className="text-center">
-                  <div className="font-mono text-text-secondary text-xs uppercase mb-1">Prize Pool</div>
-                  <div className="font-display text-3xl text-success-green">
-                    ${Number(activeTournament.prizePool ?? 0).toFixed(2)}
-                  </div>
-                </div>
-                {activeTournament.status === 'LIVE' && (
-                  <div className="text-center">
-                    <div className="font-mono text-text-secondary text-xs uppercase mb-1">Alive</div>
-                    <div className="font-display text-3xl text-text-primary">
-                      {aliveCount} / {rosterEntries.length}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Status bar */}
-            <div className="flex items-center gap-8 bg-bg-secondary border border-accent-crimson-end p-4">
-              <div className="flex items-center gap-2">
-                <div className={`w-3 h-3 rounded-full animate-pulse ${
-                  activeTournament.status === 'LIVE' ? 'bg-destructive' : 'bg-yellow-500'
-                }`} />
-                <span className="font-heading text-lg text-text-primary">
-                  {activeTournament.status === 'LIVE'
-                    ? `HOUR ${Number(activeTournament.currentHour ?? 0)} — LIVE`
-                    : activeTournament.status === 'UPCOMING'
-                    ? `BETTING OPEN — STARTS IN ${formatCountdown(countdownMs)}`
-                    : 'TOURNAMENT COMPLETE'}
-                </span>
-              </div>
-              {activeTournament.status === 'UPCOMING' && (
-                <div className="font-mono text-sm text-accent-gold">
-                  ✅ Betting is open — select a fighter below
-                </div>
-              )}
-              {myTournamentBets.length > 0 && (
-                <div className="font-mono text-sm text-text-secondary">
-                  Your bets: {myTournamentBets.length}
-                </div>
-              )}
-            </div>
-          </div>
-        ) : (
-          <div className="mb-8 text-center py-16">
-            <div className="font-display text-4xl text-text-secondary mb-4">NO ACTIVE TOURNAMENT</div>
-            <div className="font-mono text-text-secondary">The orchestrator will create one shortly.</div>
-          </div>
-        )}
-
-        {activeTournament?.status === 'LIVE' && (
-          <div className="mb-8">
-            <ArenaMap
-              width={Number(activeTournament.gridWidth ?? 12)}
-              height={Number(activeTournament.gridHeight ?? 12)}
-              tiles={arenaTiles.filter(t => Number(t.tournamentId) === Number(activeTournament.id))}
-              roster={rosterEntries}
-              events={filteredEvents}
-              currentHour={Number(activeTournament.currentHour ?? 0)}
-              selectedFighterId={selectedFighterId}
-              onSelectFighter={(id) => { setSelectedFighterId(id); setBetError(''); setBetSuccess(''); }}
-            />
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-8">
-          {/* Fighter Grid */}
+      {/* Card header — always visible */}
+      <div
+        role="button"
+        tabIndex={0}
+        className="w-full text-left px-6 py-4 flex items-center justify-between hover:bg-bg-tertiary/50 transition-colors cursor-pointer"
+        onClick={() => setExpanded((v: boolean) => !v)}
+        onKeyDown={e => e.key === 'Enter' && setExpanded((v: boolean) => !v)}
+      >
+        <div className="flex items-center gap-4">
           <div>
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="font-heading text-xl text-accent-gold uppercase">
-                {activeTournament?.status === 'LIVE' ? 'Arena Fighters' : 'Fighter Roster — Select to Bet'}
-              </h2>
-              <div className="font-mono text-sm text-text-secondary">
-                {displayFighters.length} fighters
-              </div>
+            <div className="flex items-center gap-3">
+              <span className="font-display text-xl text-accent-gold">{tournament.name}</span>
+              <span className={`font-mono text-[10px] uppercase px-2 py-0.5 border ${STATUS_COLORS[tournament.status] ?? ''}`}>
+                {isLive ? `🔴 LIVE · H${Number(tournament.currentHour ?? 0)}` : tournament.status}
+              </span>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-4">
-              {displayFighters.map(({ tf, fighter }, idx) => {
-                const isDead = tf ? !tf.isAlive : false;
-                return (
-                  <div
-                    key={idx}
-                    onClick={() => {
-                      if (isDead) return;
-                      setSelectedFighterId(Number(fighter.id));
-                      setBetError('');
-                      setBetSuccess('');
-                    }}
-                    className={`transition-all ${
-                      isDead
-                        ? ''
-                        : selectedFighterId === Number(fighter.id)
-                        ? 'ring-2 ring-accent-gold cursor-pointer'
-                        : 'hover:ring-1 hover:ring-accent-gold/50 cursor-pointer'
-                    }`}
-                  >
-                    <CharacterCard
-                      name={fighter.name}
-                      archetype={fighter.archetype}
-                      stats={{
-                        str:  fighter.strength,
-                        spd:  fighter.speed,
-                        int:  fighter.intelligence,
-                        luck: fighter.luck,
-                      }}
-                      survivalOdds={70}
-                      winOdds={`${(12.4 / (fighter.wins + 1)).toFixed(1)}x`}
-                      dead={isDead}
-                      conditionLabel={tf ? tf.condition : undefined}
-                      onClick={() => {}}
-                    />
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Right Sidebar — Bet Panel + Event Feed */}
-          <div className="space-y-6">
-            {/* Bet Panel */}
-            {activeTournament?.status === 'UPCOMING' && (
-              <div className="bg-bg-secondary border border-accent-gold inner-glow p-6 sticky top-24">
-                <h3 className="font-heading text-xl text-accent-gold mb-4 uppercase">Place Bet</h3>
-
-                {selectedFighter ? (
-                  <div className="space-y-4">
-                    {/* Selected fighter */}
-                    <div className="bg-bg-tertiary border border-accent-gold p-4">
-                      <div className="font-display text-lg text-accent-gold">{selectedFighter.name}</div>
-                      <div className="font-mono text-xs text-text-secondary">{selectedFighter.archetype}</div>
-                      <div className="flex gap-4 mt-2 font-mono text-xs text-text-secondary">
-                        <span>STR {selectedFighter.strength}</span>
-                        <span>SPD {selectedFighter.speed}</span>
-                        <span>INT {selectedFighter.intelligence}</span>
-                        <span>LCK {selectedFighter.luck}</span>
-                      </div>
-                    </div>
-
-                    {/* Bet type */}
-                    <div>
-                      <div className="font-mono text-xs text-text-secondary uppercase mb-2">Bet Type</div>
-                      <div className="space-y-2">
-                        {BET_TYPES.map(bt => (
-                          <div
-                            key={bt.key}
-                            onClick={() => setSelectedBetType(bt.key)}
-                            className={`p-3 border cursor-pointer flex justify-between items-center transition-colors ${
-                              selectedBetType === bt.key
-                                ? 'border-accent-gold bg-accent-gold/10'
-                                : 'border-separator hover:border-accent-gold'
-                            }`}
-                          >
-                            <span className="font-mono text-sm text-text-primary">{bt.label}</span>
-                            <span className="font-heading text-accent-gold">{bt.odds}x</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Amount */}
-                    <div>
-                      <div className="font-mono text-xs text-text-secondary uppercase mb-2">
-                        Amount (Balance: ${currentUser?.balance.toFixed(2) ?? '0.00'})
-                      </div>
-                      <input
-                        type="number"
-                        placeholder="$0.00"
-                        value={betAmount}
-                        onChange={e => setBetAmount(e.target.value)}
-                        className="w-full bg-bg-tertiary border border-accent-gold text-text-primary px-4 py-3 font-mono"
-                      />
-                      {betAmount && (
-                        <div className="font-mono text-xs text-accent-gold mt-1">
-                          Potential payout: ${(Number(betAmount) * (BET_TYPES.find(b => b.key === selectedBetType)?.odds ?? 2)).toFixed(2)}
-                        </div>
-                      )}
-                    </div>
-
-                    {betError   && <div className="font-mono text-xs text-red-400 bg-red-900/20 border border-red-500/30 p-3">{betError}</div>}
-                    {betSuccess && <div className="font-mono text-xs text-green-400 bg-green-900/20 border border-green-500/30 p-3">{betSuccess}</div>}
-
-                    <Button className="w-full" onClick={handlePlaceBet}>
-                      CONFIRM BET
-                    </Button>
-                    <button
-                      onClick={() => setSelectedFighterId(null)}
-                      className="w-full font-mono text-xs text-text-secondary hover:text-accent-gold transition-colors"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                ) : (
-                  <div className="font-mono text-sm text-text-secondary text-center py-8">
-                    ← Select a fighter to place a bet
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* My Bets on this tournament */}
-            {myTournamentBets.length > 0 && (
-              <div className="bg-bg-secondary border border-separator p-6">
-                <h3 className="font-heading text-lg text-accent-gold mb-3 uppercase">My Bets</h3>
-                <div className="space-y-2">
-                  {myTournamentBets.map((bet, i) => (
-                    <div key={i} className="bg-bg-tertiary border border-separator p-3 font-mono text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-accent-gold">
-                          {fighters.find(f => String(f.id) === String(bet.fighterId))?.name ?? `Fighter #${bet.fighterId}`}
-                        </span>
-                        <span className={
-                          bet.status === 'WON'  ? 'text-green-400' :
-                          bet.status === 'LOST' ? 'text-red-400'   : 'text-yellow-400'
-                        }>
-                          {bet.status}
-                        </span>
-                      </div>
-                      <div className="text-text-secondary text-xs mt-1">
-                        ${Number(bet.amount ?? 0).toFixed(2)} · {bet.betType.replace(/_/g, ' ')} · {Number(bet.odds ?? 0).toFixed(1)}x
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Event Bets Panel */}
-            {activeTournament && <EventBetsPanel tournamentId={Number(activeTournament.id)} />}
-
-            {/* Live Event Feed */}
-            <div className="bg-bg-secondary border border-separator p-6">
-              <h3 className="font-heading text-lg text-accent-gold mb-4 uppercase">
-                Live Event Feed
-              </h3>
-              {filteredEvents.length === 0 ? (
-                <div className="font-mono text-sm text-text-secondary text-center py-4">
-                  Waiting for tournament to start...
-                </div>
-              ) : (
-                <div className="space-y-2 font-mono text-sm max-h-96 overflow-y-auto">
-                  {filteredEvents.map((event, i) => (
-                    <motion.div
-                      key={i}
-                      initial={{ opacity: 0, x: 10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      className={`flex items-start gap-3 p-2 border-b border-separator/50 ${
-                        event.eventType === 'KILL'     ? 'text-red-300'    :
-                        event.eventType === 'ALLIANCE' ? 'text-accent-gold':
-                        event.eventType === 'BETRAYAL' ? 'text-orange-400' :
-                        'text-text-primary'
-                      }`}
-                    >
-                      <span className="text-text-secondary text-xs shrink-0">
-                        H{Number(event.hour ?? 0)}
-                      </span>
-                      <span>{EVENT_ICONS[event.eventType] ?? '•'}</span>
-                      <span className="text-xs leading-relaxed">{event.description}</span>
-                    </motion.div>
-                  ))}
-                </div>
-              )}
+            <div className="flex items-center gap-4 mt-1 font-mono text-xs text-text-secondary">
+              <span>{tournament.arenaType}</span>
+              {hostUser && <span>GM: {hostUser.username}</span>}
+              <span className="flex items-center gap-1"><Users className="w-3 h-3" />{regList.length} registered</span>
+              <span className="flex items-center gap-1"><Wallet className="w-3 h-3" />${Number(tournament.prizePool ?? 0).toFixed(0)} pool</span>
+              {isUpcoming && <span className="text-yellow-400">⏱ {countdown(tournament.createdAt, now)}</span>}
+              {isLive && <span>{aliveCount}/{roster.length} alive</span>}
             </div>
           </div>
         </div>
+        <div className="flex items-center gap-3">
+          {isUpcoming && (
+            <button
+              onClick={e => { e.stopPropagation(); handleRegister(); }}
+              disabled={regBusy}
+              className={`flex items-center gap-1.5 px-3 py-1.5 font-mono text-[10px] uppercase border transition-colors ${
+                myReg
+                  ? 'border-accent-gold text-accent-gold hover:bg-red-500/10 hover:border-red-400 hover:text-red-400'
+                  : 'border-separator text-text-secondary hover:border-accent-gold hover:text-accent-gold'
+              }`}
+            >
+              {myReg ? <><UserCheck className="w-3 h-3" /> Registered</> : <><UserPlus className="w-3 h-3" /> Register</>}
+            </button>
+          )}
+          {expanded ? <ChevronUp className="w-4 h-4 text-text-secondary" /> : <ChevronDown className="w-4 h-4 text-text-secondary" />}
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="border-t border-separator"
+          >
+            <div className="p-6 space-y-6">
+
+              {/* Registration panel (UPCOMING) */}
+              {isUpcoming && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+                  {/* Register CTA */}
+                  <div className="bg-bg-tertiary border border-accent-gold/30 p-5">
+                    <h3 className="font-heading text-sm uppercase text-accent-gold mb-3">Registration</h3>
+                    {myReg ? (
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2 font-mono text-sm text-success-green">
+                          <UserCheck className="w-4 h-4" /> You&apos;re registered as <strong>{myReg.role}</strong>
+                        </div>
+                        <p className="font-mono text-xs text-text-secondary">
+                          {myReg.role === 'BETTOR'
+                            ? 'You have a bet on this tournament. Good luck!'
+                            : 'Watching as a viewer. Place a bet to become a bettor.'}
+                        </p>
+                        <button
+                          onClick={handleRegister}
+                          disabled={regBusy || myReg?.role === 'BETTOR'}
+                          className="font-mono text-[10px] uppercase text-text-secondary hover:text-red-400 transition-colors disabled:opacity-40"
+                        >
+                          {myReg?.role === 'BETTOR' ? 'Cannot unregister (active bet)' : 'Unregister'}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <p className="font-mono text-xs text-text-secondary">
+                          Register as a viewer to follow this tournament. You&apos;ll automatically become a bettor if you place a bet.
+                        </p>
+                        <Button onClick={handleRegister} disabled={regBusy} variant="secondary" className="w-full">
+                          <UserPlus className="w-4 h-4 inline mr-2" />
+                          {regBusy ? 'Registering...' : 'Register as Viewer'}
+                        </Button>
+                      </div>
+                    )}
+
+                    <div className="flex gap-6 mt-4 pt-4 border-t border-separator">
+                      <div className="text-center">
+                        <div className="font-display text-2xl text-accent-gold">{bettorCount}</div>
+                        <div className="font-mono text-[10px] text-text-secondary uppercase">Bettors</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="font-display text-2xl text-text-primary">{viewerCount}</div>
+                        <div className="font-mono text-[10px] text-text-secondary uppercase">Viewers</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="font-display text-2xl text-success-green">${Number(tournament.prizePool ?? 0).toFixed(0)}</div>
+                        <div className="font-mono text-[10px] text-text-secondary uppercase">Prize Pool</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Who has registered */}
+                  <div className="bg-bg-tertiary border border-separator p-5">
+                    <h3 className="font-heading text-sm uppercase text-accent-gold mb-3 flex items-center gap-2">
+                      <Eye className="w-4 h-4" /> Registered Participants
+                    </h3>
+                    {regList.length === 0 ? (
+                      <p className="font-mono text-xs text-text-secondary text-center py-4">No participants yet.</p>
+                    ) : (
+                      <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                        {regList.map((r: any) => {
+                          const ru = users.find((u: any) => u.identity?.toHexString?.() === r.userId?.toHexString?.());
+                          const myBet = bets.find((b: any) =>
+                            Number(b.tournamentId) === tid && b.userId?.toHexString?.() === r.userId?.toHexString?.()
+                          );
+                          const betFighter = myBet ? fighters.find((f: any) => Number(f.id) === Number(myBet.fighterId)) : null;
+                          return (
+                            <div key={Number(r.id)} className="flex items-center justify-between py-1.5 border-b border-separator/40 last:border-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-xs text-text-primary">{ru?.avatarEmoji ?? '👤'} {ru?.username ?? 'Unknown'}</span>
+                                <span className={`font-mono text-[9px] uppercase px-1.5 py-0.5 border ${
+                                  r.role === 'BETTOR'
+                                    ? 'border-accent-gold/40 text-accent-gold'
+                                    : 'border-separator text-text-secondary'
+                                }`}>{r.role}</span>
+                              </div>
+                              {myBet && betFighter && (
+                                <div className="font-mono text-[10px] text-text-secondary text-right">
+                                  <span className="text-accent-gold">${Number(myBet.amount ?? 0).toFixed(0)}</span> on {betFighter.name}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Arena Map (LIVE) */}
+              {isLive && (
+                <ArenaMap
+                  width={Number(tournament.gridWidth ?? 12)}
+                  height={Number(tournament.gridHeight ?? 12)}
+                  tiles={tiles}
+                  roster={roster}
+                  events={events}
+                  currentHour={Number(tournament.currentHour ?? 0)}
+                  selectedFighterId={selectedFighter ? Number(selectedFighter.id) : null}
+                  onSelectFighter={(id: number) => {
+                    setSelectedFighter(fighters.find((f: any) => Number(f.id) === id) ?? null);
+                    setBetError(''); setBetSuccess('');
+                  }}
+                />
+              )}
+
+              <div className="grid grid-cols-1 xl:grid-cols-[1fr_340px] gap-6">
+
+                {/* Fighter grid */}
+                <div>
+                  <h3 className="font-heading text-sm uppercase text-accent-gold mb-4 flex items-center gap-2">
+                    <Sword className="w-4 h-4" />
+                    {isLive ? `Arena Fighters — ${aliveCount} Alive` : `Fighter Pool — ${fighters.length} fighters`}
+                  </h3>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    {displayFighters.slice(0, isLive ? undefined : 12).map(({ tf, fighter }: any, idx: number) => {
+                      const dead = tf ? !tf.isAlive : false;
+                      const sel  = selectedFighter && Number(selectedFighter.id) === Number(fighter.id);
+                      return (
+                        <div
+                          key={idx}
+                          onClick={() => {
+                            if (dead || (!isUpcoming && !isLive)) return;
+                            setSelectedFighter(sel ? null : fighter);
+                            setBetError(''); setBetSuccess('');
+                          }}
+                          className={`transition-all ${dead ? 'opacity-40' : isUpcoming || isLive ? 'cursor-pointer' : ''} ${sel ? 'ring-2 ring-accent-gold' : !dead && (isUpcoming || isLive) ? 'hover:ring-1 hover:ring-accent-gold/50' : ''}`}
+                        >
+                          <CharacterCard
+                            name={fighter.name}
+                            archetype={fighter.archetype}
+                            stats={{ str: fighter.strength, spd: fighter.speed, int: fighter.intelligence, luck: fighter.luck }}
+                            survivalOdds={70}
+                            winOdds={`${(12.4 / (fighter.wins + 1)).toFixed(1)}x`}
+                            avatar={fighter.avatarUrl || undefined}
+                            dead={dead}
+                            conditionLabel={tf ? tf.condition : undefined}
+                            onClick={() => {}}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {!isLive && fighters.length > 12 && (
+                    <p className="font-mono text-xs text-text-secondary mt-3 text-center">+ {fighters.length - 12} more fighters in the pool</p>
+                  )}
+                </div>
+
+                {/* Right sidebar */}
+                <div className="space-y-4">
+
+                  {/* Bet panel (UPCOMING only) */}
+                  {isUpcoming && (
+                    <div className="bg-bg-tertiary border border-accent-gold/40 p-5">
+                      <h3 className="font-heading text-sm uppercase text-accent-gold mb-3 flex items-center gap-2">
+                        <Zap className="w-4 h-4" /> Place a Bet
+                      </h3>
+                      {selectedFighter ? (
+                        <div className="space-y-3">
+                          <div className="border border-accent-gold/30 p-3 bg-bg-secondary">
+                            <div className="font-display text-base text-accent-gold">{selectedFighter.name}</div>
+                            <div className="font-mono text-[10px] text-text-secondary">{selectedFighter.archetype}</div>
+                          </div>
+                          <div className="space-y-1.5">
+                            {BET_TYPES.map(bt => (
+                              <div
+                                key={bt.key}
+                                onClick={() => setSelectedBetType(bt.key)}
+                                className={`px-3 py-2 border cursor-pointer flex justify-between items-center transition-colors ${
+                                  selectedBetType === bt.key
+                                    ? 'border-accent-gold bg-accent-gold/10'
+                                    : 'border-separator hover:border-accent-gold/50'
+                                }`}
+                              >
+                                <span className="font-mono text-xs text-text-primary">{bt.label}</span>
+                                <span className="font-heading text-xs text-accent-gold">{bt.odds}x</span>
+                              </div>
+                            ))}
+                          </div>
+                          <div>
+                            <div className="font-mono text-[10px] text-text-secondary uppercase mb-1">
+                              Amount (Balance: ${(currentUser?.balance ?? 0).toFixed(2)})
+                            </div>
+                            <input
+                              type="number"
+                              placeholder="$0.00"
+                              value={betAmount}
+                              onChange={e => setBetAmount(e.target.value)}
+                              className="w-full bg-bg-secondary border border-accent-gold/40 text-text-primary px-3 py-2 font-mono text-sm focus:border-accent-gold outline-none"
+                            />
+                            {betAmount && (
+                              <div className="font-mono text-[10px] text-accent-gold mt-1">
+                                Payout: ${(Number(betAmount) * (BET_TYPES.find(b => b.key === selectedBetType)?.odds ?? 2)).toFixed(2)}
+                              </div>
+                            )}
+                          </div>
+                          {betError   && <div className="font-mono text-xs text-red-400 bg-red-900/20 border border-red-500/30 p-2">{betError}</div>}
+                          {betSuccess && <div className="font-mono text-xs text-green-400 bg-green-900/20 border border-green-500/30 p-2">{betSuccess}</div>}
+                          <Button className="w-full" onClick={handlePlaceBet}>Confirm Bet</Button>
+                          <button onClick={() => setSelectedFighter(null)} className="w-full font-mono text-[10px] text-text-secondary hover:text-accent-gold transition-colors">Cancel</button>
+                        </div>
+                      ) : (
+                        <p className="font-mono text-xs text-text-secondary text-center py-4">← Select a fighter to bet</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* All bets on this tournament */}
+                  {allBets.length > 0 && (
+                    <div className="bg-bg-tertiary border border-separator p-4">
+                      <h3 className="font-heading text-xs uppercase text-accent-gold mb-3 flex items-center gap-2">
+                        <Trophy className="w-3.5 h-3.5" /> Bets Placed ({allBets.length})
+                      </h3>
+                      <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                        {allBets.map((bet: any, i: number) => {
+                          const betUser = users.find((u: any) => u.identity?.toHexString?.() === bet.userId?.toHexString?.());
+                          const betFighter = fighters.find((f: any) => Number(f.id) === Number(bet.fighterId));
+                          const isMe = bet.userId?.toHexString?.() === identity;
+                          return (
+                            <div key={i} className={`flex justify-between items-start py-1.5 border-b border-separator/40 last:border-0 ${isMe ? 'bg-accent-gold/5 -mx-1 px-1' : ''}`}>
+                              <div>
+                                <div className="font-mono text-xs text-text-primary flex items-center gap-1">
+                                  {betUser?.avatarEmoji ?? '👤'} {betUser?.username ?? 'Unknown'}
+                                  {isMe && <span className="text-accent-gold text-[9px]">YOU</span>}
+                                </div>
+                                <div className="font-mono text-[10px] text-text-secondary">
+                                  {betFighter?.name ?? `#${bet.fighterId}`} · {(bet.betType ?? '').replace(/_/g, ' ')}
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="font-mono text-xs text-accent-gold">${Number(bet.amount ?? 0).toFixed(0)}</div>
+                                <div className={`font-mono text-[9px] ${bet.status === 'WON' ? 'text-green-400' : bet.status === 'LOST' ? 'text-red-400' : 'text-text-secondary'}`}>
+                                  {bet.status}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Event feed */}
+                  <div className="bg-bg-tertiary border border-separator p-4">
+                    <h3 className="font-heading text-xs uppercase text-accent-gold mb-3">Event Feed</h3>
+                    {events.length === 0 ? (
+                      <p className="font-mono text-xs text-text-secondary text-center py-3">
+                        {isUpcoming ? 'Waiting for tournament to begin...' : 'No events yet.'}
+                      </p>
+                    ) : (
+                      <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                        {events.map((ev: any, i: number) => (
+                          <motion.div
+                            key={i}
+                            initial={{ opacity: 0, x: 6 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            className={`flex items-start gap-2 pb-1.5 border-b border-separator/40 last:border-0 ${
+                              ev.eventType === 'KILL'     ? 'text-red-300'    :
+                              ev.eventType === 'ALLIANCE' ? 'text-accent-gold':
+                              ev.eventType === 'BETRAYAL' ? 'text-orange-400' :
+                              'text-text-primary'
+                            }`}
+                          >
+                            <span className="text-text-secondary font-mono text-[9px] shrink-0 mt-0.5">H{Number(ev.hour ?? 0)}</span>
+                            <span className="text-xs">{EVENT_ICONS[ev.eventType] ?? '•'}</span>
+                            <span className="font-mono text-[10px] leading-relaxed">{ev.description}</span>
+                          </motion.div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* ─── Integrated from betting-overhaul branch ─── */}
+              {/* Event Bets Panel */}
+              {activeTournament && <EventBetsPanel tournamentId={Number(activeTournament.id)} />}
+
+              {/* Live Event Feed */}
+              <div className="bg-bg-secondary border border-separator p-6 mt-6">
+                <h3 className="font-heading text-lg text-accent-gold mb-4 uppercase">
+                  Live Event Feed
+                </h3>
+                {filteredEvents.length === 0 ? (
+                  <div className="font-mono text-sm text-text-secondary text-center py-4">
+                    Waiting for tournament to start...
+                  </div>
+                ) : (
+                  <div className="space-y-2 font-mono text-sm max-h-96 overflow-y-auto">
+                    {filteredEvents.map((event: any, i: number) => (
+                      <motion.div
+                        key={i}
+                        initial={{ opacity: 0, x: 10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        className={`flex items-start gap-3 p-2 border-b border-separator/50 ${
+                          event.eventType === 'KILL'     ? 'text-red-300'    :
+                          event.eventType === 'ALLIANCE' ? 'text-accent-gold':
+                          event.eventType === 'BETRAYAL' ? 'text-orange-400' :
+                          'text-text-primary'
+                        }`}
+                      >
+                        <span className="text-text-secondary text-xs shrink-0">
+                          H{Number(event.hour ?? 0)}
+                        </span>
+                        <span>{EVENT_ICONS[event.eventType] ?? '•'}</span>
+                        <span className="text-xs leading-relaxed">{event.description}</span>
+                      </motion.div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {/* ──────────────────────────────────────────────── */}
+
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
+// ─── Main page ────────────────────────────────────────────────────────────────
+
+export function TournamentPage() {
+  const {
+    currentUser, tournaments, fighters, tournamentFighters, arenaTiles,
+    bets, liveEvents, tournamentRegistrations, users, identity,
+    registerForTournament, unregisterFromTournament, placeBet,
+  } = useDB();
+
+  const [filter, setFilter] = useState<'ALL' | 'UPCOMING' | 'LIVE' | 'COMPLETED'>('ALL');
+
+  const sorted = [...tournaments].sort((a, b) => {
+    const order: Record<string, number> = { LIVE: 0, UPCOMING: 1, COMPLETED: 2 };
+    const oa = order[a.status] ?? 3;
+    const ob = order[b.status] ?? 3;
+    if (oa !== ob) return oa - ob;
+    return Number(b.id) - Number(a.id);
+  });
+
+  const filtered = filter === 'ALL' ? sorted : sorted.filter(t => t.status === filter);
+
+  const liveCnt     = tournaments.filter(t => t.status === 'LIVE').length;
+  const upcomingCnt = tournaments.filter(t => t.status === 'UPCOMING').length;
+  const completedCnt= tournaments.filter(t => t.status === 'COMPLETED').length;
+
+  return (
+    <div className="min-h-screen bg-bg-primary">
+      <NavBar />
+
+      <div className="max-w-7xl mx-auto p-6">
+        {/* Page header */}
+        <div className="mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <h1 className="font-display text-4xl text-accent-gold uppercase">Tournament Arena</h1>
+            <div className="flex items-center gap-6 font-mono text-xs text-text-secondary">
+              {liveCnt > 0 && (
+                <span className="flex items-center gap-1.5 text-red-400">
+                  <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />{liveCnt} LIVE
+                </span>
+              )}
+              {upcomingCnt > 0 && <span className="text-yellow-400">{upcomingCnt} UPCOMING</span>}
+              <span>{completedCnt} COMPLETED</span>
+            </div>
+          </div>
+
+          {/* Filter tabs */}
+          <div className="flex gap-1 border-b border-separator pb-0">
+            {(['ALL', 'LIVE', 'UPCOMING', 'COMPLETED'] as const).map(f => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className={`font-heading text-xs uppercase px-4 py-2 transition-colors border-b-2 -mb-px ${
+                  filter === f
+                    ? 'border-accent-gold text-accent-gold'
+                    : 'border-transparent text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                {f === 'ALL' ? `All (${tournaments.length})` :
+                 f === 'LIVE' ? `Live (${liveCnt})` :
+                 f === 'UPCOMING' ? `Registration Open (${upcomingCnt})` :
+                 `Completed (${completedCnt})`}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Tournament list */}
+        {filtered.length === 0 ? (
+          <div className="text-center py-24">
+            <Trophy className="w-16 h-16 text-text-secondary mx-auto mb-4 opacity-30" />
+            <div className="font-display text-3xl text-text-secondary mb-2">
+              {filter === 'LIVE' ? 'No live tournaments' : filter === 'UPCOMING' ? 'No open registration' : 'No tournaments yet'}
+            </div>
+            <div className="font-mono text-sm text-text-secondary">
+              The arena orchestrator will announce new tournaments soon.
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {filtered.map((t, i) => (
+              <TournamentCard
+                key={Number(t.id)}
+                tournament={t}
+                fighters={fighters}
+                tournamentFighters={tournamentFighters}
+                arenaTiles={arenaTiles}
+                bets={bets}
+                liveEvents={liveEvents}
+                registrations={tournamentRegistrations}
+                users={users}
+                currentUser={currentUser}
+                identity={identity}
+                registerForTournament={registerForTournament}
+                unregisterFromTournament={unregisterFromTournament}
+                placeBet={placeBet}
+                defaultExpanded={i === 0 && t.status !== 'COMPLETED'}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
