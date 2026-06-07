@@ -386,7 +386,6 @@ function pollinationsUrl(name: string, archetype: string): string {
 
 async function generateAvatars(conn: DbConnection) {
   const fighters = [...conn.db.fighterTemplate.iter()];
-  // Only update fighters that still have the old DiceBear URL or no URL
   const needsAvatar = fighters.filter(f => {
     const url = String(f.avatarUrl ?? '');
     return !url || url.includes('dicebear') || url === '';
@@ -397,22 +396,31 @@ async function generateAvatars(conn: DbConnection) {
     return;
   }
 
-  console.log(`🎨 Generating AI portraits for ${needsAvatar.length} fighters…`);
+  console.log(`🎨 Generating AI portraits for ${needsAvatar.length} fighters (this takes ~30s each)…`);
 
-  // Pollinations is free but rate-limit politely — 2 concurrent, 500ms gap
   const tasks = needsAvatar.map(f => async () => {
     const url = pollinationsUrl(String(f.name), String(f.archetype));
-    try {
-      conn.reducers.setFighterAvatar({ fighterId: Number(f.id), avatarUrl: url });
-      console.log(`  🖼️  ${f.name} → portrait set`);
-    } catch (e: any) {
-      console.error(`  ❌ Avatar failed for ${f.name}:`, e?.message ?? e);
+    // Fetch the image to trigger generation and wait for it to be ready
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await fetch(url, { signal: AbortSignal.timeout(90_000) });
+        if (res.ok) {
+          conn.reducers.setFighterAvatar({ fighterId: Number(f.id), avatarUrl: url });
+          console.log(`  🖼️  ${f.name} → portrait ready`);
+          return;
+        }
+        console.warn(`  ⚠️  ${f.name} got HTTP ${res.status}, retrying…`);
+      } catch (e: any) {
+        console.warn(`  ⚠️  ${f.name} fetch failed (attempt ${attempt + 1}): ${e?.message ?? e}`);
+      }
+      await sleep(3000);
     }
-    await sleep(500); // gentle rate limit
+    console.error(`  ❌ Could not generate portrait for ${f.name} after 3 attempts`);
   });
 
-  await pooled(tasks, 2);
-  console.log('✅ All portraits generated');
+  // Sequential to avoid hammering Pollinations
+  await pooled(tasks, 1);
+  console.log('✅ All portraits generated and cached');
 }
 
 // ─── Orchestration Loop ───────────────────────────────────────────────────────

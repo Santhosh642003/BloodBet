@@ -39,13 +39,20 @@ export function CharacterCard({
           : 'border-separator cursor-pointer hover:border-accent-gold'
       }`}
     >
-      {/* Avatar placeholder */}
-      <div className="relative w-full aspect-square bg-bg-tertiary mb-4 flex items-center justify-center">
+      {/* Avatar */}
+      <div className="relative w-full aspect-square bg-bg-tertiary mb-4 flex items-center justify-center overflow-hidden">
         {avatar ? (
-          <img src={avatar} alt={name} className="w-full h-full object-cover" />
-        ) : (
-          <div className="text-6xl text-accent-gold opacity-20">⚔️</div>
-        )}
+          <img
+            src={avatar}
+            alt={name}
+            className="w-full h-full object-cover"
+            onError={e => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling?.removeAttribute('style'); }}
+          />
+        ) : null}
+        <div style={avatar ? { display: 'none' } : undefined} className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+          <div className="text-5xl text-accent-gold opacity-20">⚔️</div>
+          {avatar && <span className="font-mono text-xs text-text-secondary opacity-60">Loading portrait…</span>}
+        </div>
         {dead && (
           <div className="absolute inset-0 flex items-center justify-center bg-bg-primary/60">
             <span className="font-display text-xl text-red-400 tracking-widest uppercase">Eliminated</span>
