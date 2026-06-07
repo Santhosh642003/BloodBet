@@ -1245,6 +1245,17 @@ export const resetFighterStats = spacetimedb.reducer(
   }
 );
 
+// Called by orchestrator to store AI-generated portrait URL for a fighter
+export const setFighterAvatar = spacetimedb.reducer(
+  { name: 'setFighterAvatar' },
+  { fighterId: t.u32(), avatarUrl: t.string() },
+  (ctx, { fighterId, avatarUrl }) => {
+    const f = ctx.db.fighterTemplate.id.find(fighterId);
+    if (!f) return;
+    ctx.db.fighterTemplate.id.update({ ...f, avatarUrl });
+  }
+);
+
 export const updateAccount = spacetimedb.reducer(
   { name: 'updateAccount' },
   { username: t.string() },

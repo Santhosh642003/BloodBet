@@ -363,6 +363,58 @@ async function runHour(conn: DbConnection, tournamentId: number) {
   console.log(`  ✓ Hour ${hour} complete`);
 }
 
+// ─── Avatar Generation ────────────────────────────────────────────────────────
+
+const ARCHETYPE_PROMPT: Record<string, string> = {
+  AGGRESSIVE:   'aggressive angry teenage boy, scarred face, battle worn, intense glare, survivor gear',
+  STRATEGIC:    'calculating teenage girl, sharp eyes, tactical vest, calm and intelligent expression',
+  COWARDLY:     'frightened teenage boy, wide scared eyes, dirty face, hiding behind hoodie, desperate',
+  DIPLOMATIC:   'charismatic teenage girl, friendly smile, leader aura, post-apocalyptic clothing',
+  BETRAYER:     'cunning smirking teenage boy, shifty eyes, sly expression, street smart, dangerous',
+  SURVIVALIST:  'tough resourceful teenage girl, weathered face, survival gear, determined expression',
+};
+
+function pollinationsUrl(name: string, archetype: string): string {
+  const base = ARCHETYPE_PROMPT[archetype] ?? 'teenage survivor, post-apocalyptic arena';
+  const prompt = encodeURIComponent(
+    `realistic portrait photo of ${base}, named ${name}, gritty arena background, cinematic lighting, photorealistic, detailed face, 4k`
+  );
+  // Use name as seed for deterministic output per fighter
+  const seed = name.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+  return `https://image.pollinations.ai/prompt/${prompt}?width=512&height=512&nologo=true&seed=${seed}&model=flux`;
+}
+
+async function generateAvatars(conn: DbConnection) {
+  const fighters = [...conn.db.fighterTemplate.iter()];
+  // Only update fighters that still have the old DiceBear URL or no URL
+  const needsAvatar = fighters.filter(f => {
+    const url = String(f.avatarUrl ?? '');
+    return !url || url.includes('dicebear') || url === '';
+  });
+
+  if (needsAvatar.length === 0) {
+    console.log('🖼️  All fighters already have AI portraits');
+    return;
+  }
+
+  console.log(`🎨 Generating AI portraits for ${needsAvatar.length} fighters…`);
+
+  // Pollinations is free but rate-limit politely — 2 concurrent, 500ms gap
+  const tasks = needsAvatar.map(f => async () => {
+    const url = pollinationsUrl(String(f.name), String(f.archetype));
+    try {
+      conn.reducers.setFighterAvatar({ fighterId: Number(f.id), avatarUrl: url });
+      console.log(`  🖼️  ${f.name} → portrait set`);
+    } catch (e: any) {
+      console.error(`  ❌ Avatar failed for ${f.name}:`, e?.message ?? e);
+    }
+    await sleep(500); // gentle rate limit
+  });
+
+  await pooled(tasks, 2);
+  console.log('✅ All portraits generated');
+}
+
 // ─── Orchestration Loop ───────────────────────────────────────────────────────
 
 function startLoop(conn: DbConnection) {
@@ -436,7 +488,8 @@ async function main() {
           const tCount = [...ctx.db.tournament.iter()].length;
           const fCount = [...ctx.db.fighterTemplate.iter()].length;
           console.log(`📡 Subscribed — Tournaments: ${tCount}, Fighters: ${fCount}`);
-          startLoop(ctx as unknown as DbConnection);
+          const conn2 = ctx as unknown as DbConnection;
+          generateAvatars(conn2).then(() => startLoop(conn2));
         })
         .subscribe([
           'SELECT * FROM tournament',
