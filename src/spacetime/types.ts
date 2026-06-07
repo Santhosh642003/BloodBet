@@ -63,12 +63,24 @@ export const FighterTemplate = __t.object("FighterTemplate", {
   intelligence: __t.u8(),
   luck: __t.u8(),
   charisma: __t.u8(),
+  points: __t.u32(),
+  totalPointsEarned: __t.u32(),
   wins: __t.u32(),
   tournamentsPlayed: __t.u32(),
   isUserCreated: __t.bool(),
   ownerIdentity: __t.option(__t.identity()),
+  avatarUrl: __t.string(),
 });
 export type FighterTemplate = __Infer<typeof FighterTemplate>;
+
+export const Friendship = __t.object("Friendship", {
+  id: __t.u32(),
+  requesterId: __t.identity(),
+  addresseeId: __t.identity(),
+  status: __t.string(),
+  createdAt: __t.timestamp(),
+});
+export type Friendship = __Infer<typeof Friendship>;
 
 export const LiveEvent = __t.object("LiveEvent", {
   id: __t.u32(),
@@ -82,6 +94,18 @@ export const LiveEvent = __t.object("LiveEvent", {
   timestamp: __t.timestamp(),
 });
 export type LiveEvent = __Infer<typeof LiveEvent>;
+
+export const Notification = __t.object("Notification", {
+  id: __t.u32(),
+  recipientId: __t.identity(),
+  kind: __t.string(),
+  title: __t.string(),
+  body: __t.string(),
+  relatedId: __t.option(__t.u32()),
+  read: __t.bool(),
+  createdAt: __t.timestamp(),
+});
+export type Notification = __Infer<typeof Notification>;
 
 export const SponsorDrop = __t.object("SponsorDrop", {
   id: __t.u32(),
@@ -132,6 +156,15 @@ export const TournamentFighter = __t.object("TournamentFighter", {
 });
 export type TournamentFighter = __Infer<typeof TournamentFighter>;
 
+export const TournamentRegistration = __t.object("TournamentRegistration", {
+  id: __t.u32(),
+  tournamentId: __t.u32(),
+  userId: __t.identity(),
+  role: __t.string(),
+  registeredAt: __t.timestamp(),
+});
+export type TournamentRegistration = __Infer<typeof TournamentRegistration>;
+
 export const User = __t.object("User", {
   identity: __t.identity(),
   username: __t.string(),
@@ -141,6 +174,10 @@ export const User = __t.object("User", {
   tournamentsHosted: __t.u32(),
   fightersOwned: __t.u32(),
   createdAt: __t.timestamp(),
+  bio: __t.string(),
+  avatarEmoji: __t.string(),
+  favoriteArchetype: __t.string(),
+  isAdmin: __t.bool(),
 });
 export type User = __Infer<typeof User>;
 
