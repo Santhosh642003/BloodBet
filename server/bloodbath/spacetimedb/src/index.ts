@@ -645,7 +645,7 @@ export const adminCreateTournament = spacetimedb.reducer(
     const tournamentId = ctx.db.tournament.insert({
       id: 0, name, arenaType, status: 'UPCOMING', currentHour: 0,
       gridWidth: W, gridHeight: H, prizePool: 0,
-      hostIdentity: ctx.sender, createdAt: ctx.timestamp,
+      hostIdentity: ctx.sender, minEventBetAmount: 5.0, createdAt: ctx.timestamp,
     }).id;
     notifyAllUsers(ctx, 'TOURNAMENT', 'New Tournament Announced',
       `"${name}" is opening in the ${arenaType}. Place your bets!`, tournamentId, ctx.sender);
