@@ -13,4 +13,5 @@ import {
 export default {
   name: __t.string(),
   arenaType: __t.string(),
+  minEventBetAmount: __t.option(__t.f64()),
 };

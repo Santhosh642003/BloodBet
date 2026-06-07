@@ -1,9 +1,10 @@
+/// <reference types="vite/client" />
 import { useState, useEffect, useCallback } from 'react';
 import { DbConnection, tables } from '../../spacetime';
 import type { EventContext, ErrorContext } from '../../spacetime';
 
-const SPACETIME_URI = 'wss://maincloud.spacetimedb.com';
-
+const SPACETIME_URI = import.meta.env.VITE_SPACETIMEDB_HOST || 'wss://maincloud.spacetimedb.com';
+const DB_NAME = import.meta.env.VITE_SPACETIMEDB_DB_NAME || 'bloodbet-dre-dev';
 const normalize = (row: any): any => {
   if (!row || typeof row !== 'object') return row;
   const out: any = {};
@@ -33,6 +34,8 @@ export function useSpacetime() {
   const [users, setUsers]                           = useState<any[]>([]);
   const [friendships, setFriendships]               = useState<any[]>([]);
   const [notifications, setNotifications]           = useState<any[]>([]);
+  const [eventBetSlips, setEventBetSlips]           = useState<any[]>([]);
+  const [eventBetPositions, setEventBetPositions]   = useState<any[]>([]);
   const [tournamentRegistrations, setTournamentRegistrations] = useState<any[]>([]);
 
   useEffect(() => {
@@ -40,7 +43,7 @@ export function useSpacetime() {
 
     const connection = DbConnection.builder()
       .withUri(SPACETIME_URI)
-      .withDatabaseName('bloodbet')
+      .withDatabaseName(DB_NAME)
       .withToken(token)
       .onConnect((ctx, id, newToken) => {
         localStorage.setItem('spacetime_token', newToken);
@@ -61,6 +64,8 @@ export function useSpacetime() {
             setUsers(normalizeAll(ctx.db.user.iter()));
             setFriendships(normalizeAll(ctx.db.friendship.iter()));
             setNotifications(normalizeAll(ctx.db.notification.iter()).filter(n => n.recipientId?.toHexString?.() === id.toHexString()));
+            setEventBetSlips(normalizeAll(ctx.db.eventBetSlip.iter()));
+            setEventBetPositions(normalizeAll(ctx.db.eventBetPosition.iter()));
             setTournamentRegistrations(normalizeAll(ctx.db.tournamentRegistration.iter()));
 
             const me = ctx.db.user.identity.find(id);
@@ -79,6 +84,8 @@ export function useSpacetime() {
             tables.auctionBid,
             tables.friendship,
             tables.notification,
+            tables.eventBetSlip,
+            tables.eventBetPosition,
             tables.tournamentRegistration,
           ]);
 
@@ -92,6 +99,10 @@ export function useSpacetime() {
         ctx.db.arenaTile.onUpdate(()         => setArenaTiles(normalizeAll(ctx.db.arenaTile.iter())));
         ctx.db.bet.onInsert(()               => setBets(normalizeAll(ctx.db.bet.iter())));
         ctx.db.bet.onUpdate(()               => setBets(normalizeAll(ctx.db.bet.iter())));
+        ctx.db.eventBetSlip.onInsert(()      => setEventBetSlips(normalizeAll(ctx.db.eventBetSlip.iter())));
+        ctx.db.eventBetSlip.onUpdate(()      => setEventBetSlips(normalizeAll(ctx.db.eventBetSlip.iter())));
+        ctx.db.eventBetPosition.onInsert(()  => setEventBetPositions(normalizeAll(ctx.db.eventBetPosition.iter())));
+        ctx.db.eventBetPosition.onUpdate(()  => setEventBetPositions(normalizeAll(ctx.db.eventBetPosition.iter())));
         ctx.db.liveEvent.onInsert(()         => setLiveEvents(normalizeAll(ctx.db.liveEvent.iter())));
         ctx.db.sponsorDrop.onInsert(()       => setSponsorDrops(normalizeAll(ctx.db.sponsorDrop.iter())));
         ctx.db.sponsorDrop.onUpdate(()       => setSponsorDrops(normalizeAll(ctx.db.sponsorDrop.iter())));
@@ -155,6 +166,14 @@ export function useSpacetime() {
   const unregisterFromTournament = useCallback((tournamentId: number) => {
     if (!conn) return Promise.reject(new Error('Not connected'));
     return conn.reducers.unregisterFromTournament({ tournamentId });
+  }, [conn]);
+
+  const createEventBetSlip = useCallback((tournamentId: number, fighter1Id: number, action: string, fighter2Id: number, roundsDuration: number, side: string, amount: number) => {
+    conn?.reducers.createEventBetSlip({ tournamentId, fighter1Id, action, fighter2Id, roundsDuration, side, amount });
+  }, [conn]);
+
+  const joinEventBetSlip = useCallback((slipId: number, side: string, amount: number) => {
+    conn?.reducers.joinEventBetSlip({ slipId, side, amount });
   }, [conn]);
 
   const sponsorFighter = useCallback((fighterId: number, itemType: string) => {
@@ -246,11 +265,13 @@ export function useSpacetime() {
     conn, identity, connected, currentUser,
     fighters, tournaments, tournamentFighters, arenaTiles,
     bets, liveEvents, sponsorDrops, contracts, auctionBids, users, friendships, notifications,
+    eventBetSlips, eventBetPositions,
     tournamentRegistrations,
     register, verifyLogin, updateAccount, placeBet, sponsorFighter,
     createTournament, createFighter, hostTournament, placeBid, logout,
     updateProfile, sendFriendRequest, respondToFriendRequest, removeFriend,
     markNotificationRead, markAllNotificationsRead,
+    createEventBetSlip, joinEventBetSlip,
     claimAdmin, setAdmin, adminCreateTournament, startTournament, advanceHour,
     registerForTournament, unregisterFromTournament,
   };

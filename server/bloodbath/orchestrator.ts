@@ -3,10 +3,10 @@ import { DbConnection } from '../../src/spacetime';
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-const SPACETIME_URI     = 'wss://maincloud.spacetimedb.com';
-const DB_NAME           = 'bloodbet';
+const SPACETIME_URI     = process.env.SPACETIMEDB_HOST || 'wss://maincloud.spacetimedb.com';
+const DB_NAME           = process.env.SPACETIMEDB_DB_NAME || 'bloodbet-dre-dev';
 const HOUR_INTERVAL_MS  = 10_000;   // 10 s per in-game hour
-const BETTING_WINDOW_MS = 30 * 60 * 1000; // 30 min betting window
+const BETTING_WINDOW_MS = 5 * 60 * 1000; // 5 min betting window
 const AI_CONCURRENCY    = 4;        // parallel Groq calls
 
 const ARENA_TYPES = [

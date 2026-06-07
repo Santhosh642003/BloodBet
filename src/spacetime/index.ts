@@ -36,10 +36,12 @@ import {
 // Import all reducer arg schemas
 import AdminCreateTournamentReducer from "./admin_create_tournament_reducer";
 import AdvanceHourReducer from "./advance_hour_reducer";
+import CreateEventBetSlipReducer from "./create_event_bet_slip_reducer";
 import ClaimAdminReducer from "./claim_admin_reducer";
 import CreateFighterReducer from "./create_fighter_reducer";
 import CreateTournamentReducer from "./create_tournament_reducer";
 import HostTournamentReducer from "./host_tournament_reducer";
+import JoinEventBetSlipReducer from "./join_event_bet_slip_reducer";
 import MarkAllNotificationsReadReducer from "./mark_all_notifications_read_reducer";
 import MarkNotificationReadReducer from "./mark_notification_read_reducer";
 import PlaceBetReducer from "./place_bet_reducer";
@@ -66,6 +68,8 @@ import ArenaTileRow from "./arena_tile_table";
 import AuctionBidRow from "./auction_bid_table";
 import BetRow from "./bet_table";
 import ContractRow from "./contract_table";
+import EventBetPositionRow from "./event_bet_position_table";
+import EventBetSlipRow from "./event_bet_slip_table";
 import FighterTemplateRow from "./fighter_template_table";
 import FriendshipRow from "./friendship_table";
 import LiveEventRow from "./live_event_table";
@@ -139,6 +143,34 @@ const tablesSchema = __schema({
       { name: 'contract_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, ContractRow),
+  eventBetPosition: __table({
+    name: 'eventBetPosition',
+    indexes: [
+      { accessor: 'id', name: 'eventBetPosition_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'slipId', name: 'eventBetPosition_slip_id_idx_btree', algorithm: 'btree', columns: [
+        'slipId',
+      ] },
+    ],
+    constraints: [
+      { name: 'eventBetPosition_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, EventBetPositionRow),
+  eventBetSlip: __table({
+    name: 'eventBetSlip',
+    indexes: [
+      { accessor: 'id', name: 'eventBetSlip_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'tournamentId', name: 'eventBetSlip_tournament_id_idx_btree', algorithm: 'btree', columns: [
+        'tournamentId',
+      ] },
+    ],
+    constraints: [
+      { name: 'eventBetSlip_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, EventBetSlipRow),
   fighterTemplate: __table({
     name: 'fighterTemplate',
     indexes: [
@@ -283,10 +315,12 @@ const tablesSchema = __schema({
 const reducersSchema = __reducers(
   __reducerSchema("adminCreateTournament", AdminCreateTournamentReducer),
   __reducerSchema("advanceHour", AdvanceHourReducer),
-  __reducerSchema("claimAdmin", ClaimAdminReducer),
+  __reducerSchema("createEventBetSlip", CreateEventBetSlipReducer),
   __reducerSchema("createFighter", CreateFighterReducer),
   __reducerSchema("createTournament", CreateTournamentReducer),
   __reducerSchema("hostTournament", HostTournamentReducer),
+  __reducerSchema("joinEventBetSlip", JoinEventBetSlipReducer),
+  __reducerSchema("claimAdmin", ClaimAdminReducer),
   __reducerSchema("markAllNotificationsRead", MarkAllNotificationsReadReducer),
   __reducerSchema("markNotificationRead", MarkNotificationReadReducer),
   __reducerSchema("placeBet", PlaceBetReducer),

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { CharacterCard } from '../components/CharacterCard';
 import { ArenaMap } from '../components/ArenaMap';
 import { CinematicIntro } from '../components/CinematicIntro';
+import { EventBetsPanel } from '../components/EventBetsPanel';
 import { Button } from '../components/Button';
 import { NavBar } from '../components/NavBar';
 import { motion, AnimatePresence } from 'motion/react';
@@ -14,10 +15,10 @@ import { useDB } from '../context/SpacetimeContext';
 import { useSound } from '../context/SoundContext';
 
 const BET_TYPES = [
-  { key: 'WIN',              label: 'Wins Tournament',    odds: 12.4 },
-  { key: 'SURVIVES_DAY_1',   label: 'Survives Round 1',   odds: 1.4  },
-  { key: 'DIES_FIRST',       label: 'Dies First',          odds: 22.0 },
-  { key: 'MOST_KILLS',       label: 'Kills 3+ Opponents', odds: 5.0  },
+  { key: 'WIN',          label: 'Wins Tournament',   odds: 12.4 },
+  { key: 'SURVIVES_DAY_1',  label: 'Survives Round 1',   odds: 1.4  },
+  { key: 'DIES_FIRST',      label: 'Dies First',          odds: 22.0 },
+  { key: 'MOST_KILLS',      label: 'Kills 3+ Opponents', odds: 5.0  },
   { key: 'FORMS_ALLIANCE',   label: 'Forms Alliance',      odds: 2.1  },
 ];
 
@@ -27,7 +28,7 @@ const EVENT_ICONS: Record<string, string> = {
 
 const STATUS_COLORS: Record<string, string> = {
   UPCOMING: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30',
-  LIVE:     'text-red-400 bg-red-500/10 border-red-500/30',
+  LIVE:      'text-red-400 bg-red-500/10 border-red-500/30',
   COMPLETED:'text-text-secondary bg-separator/10 border-separator',
 };
 
@@ -50,6 +51,7 @@ function useNow() {
   return now;
 }
 
+// Rename windowMs to avoid duplicate naming collisions if needed
 function countdown(createdAtTs: any, now: number, windowMs = 30 * 60 * 1000): string {
   const micros = createdAtTs?.microsSinceUnixEpoch;
   if (!micros) return '--:--';
@@ -62,10 +64,12 @@ function countdown(createdAtTs: any, now: number, windowMs = 30 * 60 * 1000): st
 
 // ─── Single tournament card (expanded view) ──────────────────────────────────
 
+// Note: If 'activeTournament' or 'filteredEvents' from the betting branch 
+// are missing from props, make sure they are derived or destructured here.
 function TournamentCard({
   tournament, fighters, tournamentFighters, arenaTiles, bets, liveEvents,
   registrations, users, currentUser, identity, registerForTournament, unregisterFromTournament,
-  placeBet, defaultExpanded,
+  placeBet, defaultExpanded, activeTournament, filteredEvents = [],
 }: any) {
   const { play } = useSound();
   const navigate = useNavigate();
@@ -79,10 +83,10 @@ function TournamentCard({
   const [expanded,        setExpanded]        = useState(defaultExpanded);
   const [selectedFighter, setSelectedFighter] = useState<any>(null);
   const [selectedBetType, setSelectedBetType] = useState('WIN');
-  const [betAmount,       setBetAmount]        = useState('');
+  const [betAmount,        setBetAmount]        = useState('');
   const [betError,        setBetError]         = useState('');
   const [betSuccess,      setBetSuccess]       = useState('');
-  const [regBusy,         setRegBusy]          = useState(false);
+  const [regBusy,          setRegBusy]          = useState(false);
 
   // Cinematic intro
   const [showIntro, setShowIntro] = useState(false);
@@ -506,6 +510,46 @@ function TournamentCard({
                   </div>
                 </div>
               </div>
+
+              {/* ─── Integrated from betting-overhaul branch ─── */}
+              {/* Event Bets Panel */}
+              {activeTournament && <EventBetsPanel tournamentId={Number(activeTournament.id)} />}
+
+              {/* Live Event Feed */}
+              <div className="bg-bg-secondary border border-separator p-6 mt-6">
+                <h3 className="font-heading text-lg text-accent-gold mb-4 uppercase">
+                  Live Event Feed
+                </h3>
+                {filteredEvents.length === 0 ? (
+                  <div className="font-mono text-sm text-text-secondary text-center py-4">
+                    Waiting for tournament to start...
+                  </div>
+                ) : (
+                  <div className="space-y-2 font-mono text-sm max-h-96 overflow-y-auto">
+                    {filteredEvents.map((event: any, i: number) => (
+                      <motion.div
+                        key={i}
+                        initial={{ opacity: 0, x: 10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        className={`flex items-start gap-3 p-2 border-b border-separator/50 ${
+                          event.eventType === 'KILL'     ? 'text-red-300'    :
+                          event.eventType === 'ALLIANCE' ? 'text-accent-gold':
+                          event.eventType === 'BETRAYAL' ? 'text-orange-400' :
+                          'text-text-primary'
+                        }`}
+                      >
+                        <span className="text-text-secondary text-xs shrink-0">
+                          H{Number(event.hour ?? 0)}
+                        </span>
+                        <span>{EVENT_ICONS[event.eventType] ?? '•'}</span>
+                        <span className="text-xs leading-relaxed">{event.description}</span>
+                      </motion.div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {/* ──────────────────────────────────────────────── */}
+
             </div>
           </motion.div>
         )}

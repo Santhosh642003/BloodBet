@@ -11,7 +11,11 @@ import {
 } from "spacetimedb";
 
 export default {
-  name: __t.string(),
-  arenaType: __t.string(),
-  minEventBetAmount: __t.option(__t.f64()),
+  tournamentId: __t.u32(),
+  fighter1Id: __t.u32(),
+  action: __t.string(),
+  fighter2Id: __t.u32(),
+  roundsDuration: __t.u32(),
+  side: __t.string(),
+  amount: __t.f64(),
 };

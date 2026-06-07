@@ -53,6 +53,30 @@ export const Contract = __t.object("Contract", {
 });
 export type Contract = __Infer<typeof Contract>;
 
+export const EventBetPosition = __t.object("EventBetPosition", {
+  id: __t.u32(),
+  slipId: __t.u32(),
+  userId: __t.identity(),
+  side: __t.string(),
+  amount: __t.f64(),
+  placedAt: __t.timestamp(),
+});
+export type EventBetPosition = __Infer<typeof EventBetPosition>;
+
+export const EventBetSlip = __t.object("EventBetSlip", {
+  id: __t.u32(),
+  tournamentId: __t.u32(),
+  creatorId: __t.identity(),
+  fighter1Id: __t.u32(),
+  action: __t.string(),
+  fighter2Id: __t.u32(),
+  roundsDuration: __t.u32(),
+  startHour: __t.u32(),
+  status: __t.string(),
+  createdAt: __t.timestamp(),
+});
+export type EventBetSlip = __Infer<typeof EventBetSlip>;
+
 export const FighterTemplate = __t.object("FighterTemplate", {
   id: __t.u32(),
   name: __t.string(),
@@ -132,6 +156,7 @@ export const Tournament = __t.object("Tournament", {
   gridHeight: __t.u8(),
   prizePool: __t.f64(),
   hostIdentity: __t.option(__t.identity()),
+  minEventBetAmount: __t.f64(),
   createdAt: __t.timestamp(),
 });
 export type Tournament = __Infer<typeof Tournament>;
