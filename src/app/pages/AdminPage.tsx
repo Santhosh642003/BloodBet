@@ -59,12 +59,12 @@ export function AdminPage() {
 
   if (!isAdmin) {
     return (
-      <div className="max-w-2xl mx-auto px-6 py-16 text-center">
-        <Shield className="w-12 h-12 text-accent-gold mx-auto mb-4" />
-        <h1 className="font-display text-2xl text-accent-gold mb-2">Admin Access Required</h1>
+      <div className="max-w-2xl mx-auto px-6 py-16 text-center space-y-6">
+        <Shield className="w-12 h-12 text-accent-gold mx-auto" />
+        <h1 className="font-display text-2xl text-accent-gold">Admin Access Required</h1>
         {!anyAdmin ? (
           <>
-            <p className="font-mono text-sm text-text-secondary mb-6">
+            <p className="font-mono text-sm text-text-secondary">
               No admin exists yet. Claim the role to take control of the arena.
             </p>
             <Button onClick={() => run('claim', claimAdmin)} disabled={busy === 'claim'}>
@@ -76,6 +76,16 @@ export function AdminPage() {
             You do not have admin privileges. Ask an existing admin to grant you access.
           </p>
         )}
+        {/* Always available — safe to run without admin */}
+        <div className="border-t border-separator pt-6">
+          <p className="font-mono text-xs text-text-secondary mb-3">Missing fighters? Restore the roster:</p>
+          <Button variant="secondary" onClick={() => run('seed', adminSeedFighters)} disabled={busy === 'seed'}>
+            {busy === 'seed' ? 'Seeding...' : '⚔️ Restore AI Fighters'}
+          </Button>
+          <p className="font-mono text-xs text-text-secondary mt-2">
+            {fighters.filter((f: any) => !f.isUserCreated).length} / 50 AI fighters active
+          </p>
+        </div>
         {error && <div className="mt-4 font-mono text-xs text-destructive">{error}</div>}
       </div>
     );

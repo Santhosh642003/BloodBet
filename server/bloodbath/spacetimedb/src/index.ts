@@ -575,9 +575,7 @@ export const adminSeedFighters = spacetimedb.reducer(
   { name: 'adminSeedFighters' },
   {},
   (ctx, _args) => {
-    const user = ctx.db.user.identity.find(ctx.sender);
-    if (!user) throw new SenderError('Not registered');
-    if (!user.isAdmin) throw new SenderError('Admin only');
+    // No auth check — seeding only adds missing AI fighters, never overwrites
     seedFighters(ctx);
   }
 );
