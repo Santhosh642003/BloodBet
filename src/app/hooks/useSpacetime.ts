@@ -3,7 +3,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { DbConnection, tables } from '../../spacetime';
 import type { EventContext, ErrorContext } from '../../spacetime';
 
-const SPACETIME_URI = import.meta.env.VITE_SPACETIMEDB_HOST || 'wss://maincloud.spacetimedb.com';
+const SPACETIME_URI = (import.meta.env.VITE_SPACETIMEDB_HOST || 'wss://maincloud.spacetimedb.com')
+  .replace(/^https:\/\//, 'wss://').replace(/^http:\/\//, 'ws://');
 const DB_NAME = import.meta.env.VITE_SPACETIMEDB_DB_NAME || 'bloodbet';
 const normalize = (row: any): any => {
   if (!row || typeof row !== 'object') return row;
