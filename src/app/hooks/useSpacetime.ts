@@ -77,22 +77,22 @@ export function useSpacetime() {
             if (me) setCurrentUser(normalize(me));
           })
           .subscribe([
-            tables.user,
-            tables.fighterTemplate,
-            tables.tournament,
-            tables.tournamentFighter,
-            tables.arenaTile,
-            tables.bet,
-            tables.liveEvent,
-            tables.sponsorDrop,
-            tables.contract,
-            tables.auctionBid,
-            tables.auction,
-            tables.friendship,
-            tables.notification,
-            tables.eventBetSlip,
-            tables.eventBetPosition,
-            tables.tournamentRegistration,
+            'SELECT * FROM user',
+            'SELECT * FROM fighter_template',
+            'SELECT * FROM tournament',
+            'SELECT * FROM tournament_fighter',
+            'SELECT * FROM arena_tile',
+            'SELECT * FROM bet',
+            'SELECT * FROM live_event',
+            'SELECT * FROM sponsor_drop',
+            'SELECT * FROM contract',
+            'SELECT * FROM auction_bid',
+            'SELECT * FROM auction',
+            'SELECT * FROM friendship',
+            'SELECT * FROM notification',
+            'SELECT * FROM event_bet_slip',
+            'SELECT * FROM event_bet_position',
+            'SELECT * FROM tournament_registration',
           ]);
 
         ctx.db.fighterTemplate.onInsert(()   => setFighters(normalizeAll(ctx.db.fighterTemplate.iter())));
