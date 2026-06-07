@@ -381,7 +381,7 @@ function pollinationsUrl(name: string, archetype: string): string {
   );
   // Use name as seed for deterministic output per fighter
   const seed = name.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
-  return `https://image.pollinations.ai/prompt/${prompt}?width=512&height=512&nologo=true&seed=${seed}&model=flux`;
+  return `https://image.pollinations.ai/prompt/${prompt}?width=512&height=512&nologo=true&seed=${seed}`;
 }
 
 async function generateAvatars(conn: DbConnection) {
