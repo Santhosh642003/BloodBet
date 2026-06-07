@@ -1245,18 +1245,15 @@ export const resetFighterStats = spacetimedb.reducer(
   }
 );
 
-// Called by orchestrator to store AI-generated portrait URL for a fighter.
-// Once a real portrait is set it is never overwritten.
-export const setFighterAvatar = spacetimedb.reducer(
-  { name: 'setFighterAvatar' },
-  { fighterId: t.u32(), avatarUrl: t.string() },
-  (ctx, { fighterId, avatarUrl }) => {
-    const f = ctx.db.fighterTemplate.id.find(fighterId);
-    if (!f) return;
-    const existing = String(f.avatarUrl ?? '');
-    // Only set if empty, DiceBear placeholder, or old Pollinations URL (not yet a data URL)
-    if (existing && !existing.includes('dicebear') && !existing.startsWith('https://image.pollinations')) return;
-    ctx.db.fighterTemplate.id.update({ ...f, avatarUrl });
+// Admin: reset all fighter avatars back to DiceBear SVGs
+export const resetAvatars = spacetimedb.reducer(
+  { name: 'resetAvatars' },
+  {},
+  (ctx, _args) => {
+    requireAdmin(ctx);
+    for (const f of [...ctx.db.fighterTemplate.iter()]) {
+      ctx.db.fighterTemplate.id.update({ ...f, avatarUrl: avatarUrlFor(String(f.name), String(f.archetype)) });
+    }
   }
 );
 
