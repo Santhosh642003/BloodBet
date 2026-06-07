@@ -42,15 +42,21 @@ const fighterTemplate = table(
     name:              t.string(),
     lore:              t.string(),
     archetype:         t.string(),
+    // Stats start at 0 and grow through tournament performance + point spending
     strength:          t.u8(),
     speed:             t.u8(),
     intelligence:      t.u8(),
     luck:              t.u8(),
     charisma:          t.u8(),
+    // Point economy
+    points:            t.u32(), // unspent points (usually 0 — auto-spent after each tournament)
+    totalPointsEarned: t.u32(), // lifetime total for leaderboard display
+    // Meta
     wins:              t.u32(),
     tournamentsPlayed: t.u32(),
     isUserCreated:     t.bool(),
     ownerIdentity:     t.option(t.identity()),
+    avatarUrl:         t.string(), // DiceBear SVG URL chosen by archetype
   }
 );
 
@@ -220,6 +226,64 @@ export default spacetimedb;
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
+// DiceBear avatar style per archetype
+const ARCHETYPE_AVATAR_STYLE: Record<string, string> = {
+  AGGRESSIVE:   'bottts',
+  STRATEGIC:    'adventurer',
+  COWARDLY:     'pixel-art',
+  DIPLOMATIC:   'avataaars',
+  BETRAYER:     'personas',
+  SURVIVALIST:  'micah',
+};
+
+function avatarUrlFor(name: string, archetype: string): string {
+  const style = ARCHETYPE_AVATAR_STYLE[archetype] ?? 'identicon';
+  const seed  = encodeURIComponent(name);
+  return `https://api.dicebear.com/9.x/${style}/svg?seed=${seed}`;
+}
+
+// Archetype stat-spending priority order (most to least preferred)
+const ARCHETYPE_PRIORITIES: Record<string, Array<'strength'|'speed'|'intelligence'|'luck'|'charisma'>> = {
+  AGGRESSIVE:   ['strength', 'speed',        'luck',          'intelligence', 'charisma'],
+  STRATEGIC:    ['intelligence', 'luck',      'charisma',      'strength',     'speed'],
+  COWARDLY:     ['speed',  'intelligence',    'luck',          'charisma',     'strength'],
+  DIPLOMATIC:   ['charisma', 'intelligence',  'luck',          'speed',        'strength'],
+  BETRAYER:     ['charisma', 'luck',          'intelligence',  'speed',        'strength'],
+  SURVIVALIST:  ['speed',  'luck',            'strength',      'intelligence', 'charisma'],
+};
+const STAT_CAP = 10;
+
+function calcTournamentPoints(tf: any, allTf: any[], isWinner: boolean): number {
+  let pts = 5; // participation
+  pts += Number(tf.kills) * 3;
+  if (isWinner) pts += 10;
+  else if (allTf.filter((x: any) => !x.isAlive || x === tf).length <= 3) pts += 5; // top-3 bonus
+  // Survival time bonus: 1 point per 12 hours survived
+  const survivedHours = tf.eliminatedHour ? Number(tf.eliminatedHour) : 999;
+  pts += Math.floor(Math.min(survivedHours, 120) / 12);
+  return pts;
+}
+
+function spendPointsOnStats(fighter: any, points: number): any {
+  const prio = ARCHETYPE_PRIORITIES[fighter.archetype] ?? ARCHETYPE_PRIORITIES['STRATEGIC'];
+  let updated = { ...fighter };
+  let remaining = points;
+  while (remaining > 0) {
+    let spent = false;
+    for (const stat of prio) {
+      if (remaining <= 0) break;
+      if (Number(updated[stat]) < STAT_CAP) {
+        updated[stat] = Number(updated[stat]) + 1;
+        remaining--;
+        spent = true;
+      }
+    }
+    if (!spent) break; // all stats capped
+  }
+  updated.points = remaining; // leftover (usually 0 unless all stats maxed)
+  return updated;
+}
+
 function getCondition(hunger: number, thirst: number, fatigue: number, injury: number): string {
   if (injury >= 80)  return 'CRITICAL';
   if (injury >= 50)  return 'INJURED';
@@ -299,6 +363,24 @@ function endTournament(ctx: any, tournament: any, survivors: any[], hour: number
   settleBets(ctx, tournament.id, winnerId);
   ctx.db.tournament.id.update({ ...tournament, status: 'COMPLETED' });
   if (winner) ctx.db.fighterTemplate.id.update({ ...winner, wins: winner.wins + 1 });
+
+  // Award + auto-spend points for every fighter that participated
+  const allTfForPts = [...ctx.db.tournamentFighter.iter()]
+    .filter((x: any) => Number(x.tournamentId) === Number(tournament.id));
+  for (const tf of allTfForPts) {
+    const f = [...ctx.db.fighterTemplate.iter()].find((x: any) => Number(x.id) === Number(tf.fighterId));
+    if (!f) continue;
+    const pts    = calcTournamentPoints(tf, allTfForPts, Number(tf.fighterId) === Number(winnerId));
+    const earned = Number(f.totalPointsEarned ?? 0) + pts;
+    const fAfter = spendPointsOnStats({ ...f, totalPointsEarned: earned }, pts + Number(f.points ?? 0));
+    ctx.db.fighterTemplate.id.update(fAfter);
+    ctx.db.liveEvent.insert({
+      id: 0, tournamentId: tournament.id, hour, eventType: 'PHASE',
+      description: `${f.name} earned ${pts} pts → stats upgraded (STR:${fAfter.strength} SPD:${fAfter.speed} INT:${fAfter.intelligence} LCK:${fAfter.luck} CHA:${fAfter.charisma})`,
+      involvedIds: JSON.stringify([f.id]),
+      x: undefined, y: undefined, timestamp: ctx.timestamp,
+    });
+  }
 }
 
 function processSponsorDrops(ctx: any, tournamentId: number, hour: number) {
@@ -354,12 +436,15 @@ export const init = spacetimedb.init(ctx => {
     'Silence is its weapon. It has never spoken a word in any arena.',
   ];
   for (let i = 0; i < 50; i++) {
+    const archetype = archetypes[i % archetypes.length];
+    const name      = names[i];
     ctx.db.fighterTemplate.insert({
-      id: 0, name: names[i], lore: lores[i % lores.length],
-      archetype: archetypes[i % archetypes.length],
-      strength: (i * 7 % 4) + 1, speed: (i * 3 % 4) + 1,
-      intelligence: (i * 11 % 4) + 1, luck: (i * 5 % 4) + 1, charisma: (i * 13 % 4) + 1,
+      id: 0, name, lore: lores[i % lores.length], archetype,
+      // All stats start at 0 — fighters grow through point spending after tournaments
+      strength: 0, speed: 0, intelligence: 0, luck: 0, charisma: 0,
+      points: 0, totalPointsEarned: 0,
       wins: 0, tournamentsPlayed: 0, isUserCreated: false, ownerIdentity: undefined,
+      avatarUrl: avatarUrlFor(name, archetype),
     });
   }
 });
@@ -783,9 +868,9 @@ export const advanceHour = spacetimedb.reducer(
             const defInv       = JSON.parse(target.inventory);
             const attHasWeapon = attInv.includes('WEAPON');
             const defHasArmor  = defInv.includes('ARMOR');
-            // True RNG combat — no longer deterministic
-            const attPower = Number(fighter.strength) * 2.5 + Number(fighter.luck) * 0.5 + (attHasWeapon ? 18 : 0) + Number(newTf.morale ?? 50) * 0.1;
-            const defPower = Number(defFighter.strength) + Number(defFighter.speed) * 1.2 + (defHasArmor ? 18 : 0) + Number(target.morale ?? 50) * 0.1 + Number(target.injury) * 0.05;
+            // True RNG combat — floor of 5 so zero-stat rookies still fight
+            const attPower = Math.max(5, Number(fighter.strength) * 2.5 + Number(fighter.luck) * 0.5) + (attHasWeapon ? 18 : 0) + Number(newTf.morale ?? 50) * 0.1;
+            const defPower = Math.max(5, Number(defFighter.strength) + Number(defFighter.speed) * 1.2) + (defHasArmor ? 18 : 0) + Number(target.morale ?? 50) * 0.1 + Number(target.injury) * 0.05;
             const winChance = attPower / (attPower + defPower);
             const roll      = ctx.random(); // truly random each call
             const attWins   = roll < winChance;
@@ -1006,7 +1091,12 @@ export const createFighter = spacetimedb.reducer(
     if (!user) throw new SenderError('Not registered');
     if (user.balance < 500) throw new SenderError('Need $500 to create a fighter');
     ctx.db.user.identity.update({ ...user, balance: user.balance - 500, fightersOwned: user.fightersOwned + 1 });
-    ctx.db.fighterTemplate.insert({ id: 0, ...args, wins: 0, tournamentsPlayed: 0, isUserCreated: true, ownerIdentity: ctx.sender });
+    ctx.db.fighterTemplate.insert({
+      id: 0, ...args,
+      points: 0, totalPointsEarned: 0,
+      wins: 0, tournamentsPlayed: 0, isUserCreated: true, ownerIdentity: ctx.sender,
+      avatarUrl: avatarUrlFor(args.name, args.archetype),
+    });
   }
 );
 
@@ -1135,6 +1225,23 @@ export const markAllNotificationsRead = spacetimedb.reducer(
   (ctx, _args) => {
     const mine = [...ctx.db.notification.recipientId.filter(ctx.sender)].filter((n: any) => !n.read);
     for (const n of mine) ctx.db.notification.id.update({ ...n, read: true });
+  }
+);
+
+// Admin tool to wipe fighter stats back to 0 (useful after republishing with existing data)
+export const resetFighterStats = spacetimedb.reducer(
+  { name: 'resetFighterStats' },
+  {},
+  (ctx, _args) => {
+    requireAdmin(ctx);
+    for (const f of [...ctx.db.fighterTemplate.iter()]) {
+      ctx.db.fighterTemplate.id.update({
+        ...f,
+        strength: 0, speed: 0, intelligence: 0, luck: 0, charisma: 0,
+        points: 0, totalPointsEarned: 0, wins: 0, tournamentsPlayed: 0,
+        avatarUrl: avatarUrlFor(String(f.name), String(f.archetype)),
+      });
+    }
   }
 );
 

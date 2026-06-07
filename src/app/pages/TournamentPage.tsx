@@ -364,6 +364,7 @@ function TournamentCard({
                             stats={{ str: fighter.strength, spd: fighter.speed, int: fighter.intelligence, luck: fighter.luck }}
                             survivalOdds={70}
                             winOdds={`${(12.4 / (fighter.wins + 1)).toFixed(1)}x`}
+                            avatar={fighter.avatarUrl || undefined}
                             dead={dead}
                             conditionLabel={tf ? tf.condition : undefined}
                             onClick={() => {}}
