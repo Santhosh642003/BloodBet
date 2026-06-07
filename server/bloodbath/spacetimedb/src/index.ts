@@ -714,11 +714,18 @@ export const advanceHour = spacetimedb.reducer(
 
       switch (action) {
         case 'MOVE': {
-          const nx = clamp(Number(decision?.targetX ?? tf.x), 0, Number(tournament.gridWidth) - 1);
-          const ny = clamp(Number(decision?.targetY ?? tf.y), 0, Number(tournament.gridHeight) - 1);
-          newTf.x = nx; newTf.y = ny;
+          // Enforce one tile per hour — step at most ±1 on one axis
+          const rawX = Number(decision?.targetX ?? tf.x);
+          const rawY = Number(decision?.targetY ?? tf.y);
+          const dx   = rawX - Number(tf.x), dy = rawY - Number(tf.y);
+          const nx   = clamp(Number(tf.x) + Math.sign(dx), 0, Number(tournament.gridWidth)  - 1);
+          const ny   = clamp(Number(tf.y) + Math.sign(dy), 0, Number(tournament.gridHeight) - 1);
+          // If both axes differ, pick the dominant axis (larger delta) and hold the other
+          const finalX = Math.abs(dx) >= Math.abs(dy) ? nx : Number(tf.x);
+          const finalY = Math.abs(dy) >  Math.abs(dx) ? ny : Number(tf.y);
+          newTf.x = finalX; newTf.y = finalY;
           newTf.fatigue = clamp(Number(newTf.fatigue) + 2, 0, 100);
-          const destTile = allTiles.find((t: any) => Number(t.x) === nx && Number(t.y) === ny);
+          const destTile = allTiles.find((t: any) => Number(t.x) === finalX && Number(t.y) === finalY);
           if (destTile?.hasResource && destTile.resourceType) {
             const inv: string[] = JSON.parse(newTf.inventory);
             inv.push(destTile.resourceType);
@@ -727,13 +734,13 @@ export const advanceHour = spacetimedb.reducer(
             ctx.db.liveEvent.insert({
               id: 0, tournamentId, hour, eventType: 'RESOURCE',
               description: `${fighter.name} picks up ${destTile.resourceType}${reason ? ` — "${reason}"` : ''}`,
-              involvedIds: JSON.stringify([tf.fighterId]), x: nx, y: ny, timestamp: ctx.timestamp,
+              involvedIds: JSON.stringify([tf.fighterId]), x: finalX, y: finalY, timestamp: ctx.timestamp,
             });
           } else {
             ctx.db.liveEvent.insert({
               id: 0, tournamentId, hour, eventType: 'MOVE',
-              description: `${fighter.name} moves to (${nx},${ny})${reason ? ` — "${reason}"` : ''}`,
-              involvedIds: JSON.stringify([tf.fighterId]), x: nx, y: ny, timestamp: ctx.timestamp,
+              description: `${fighter.name} moves to (${finalX},${finalY})${reason ? ` — "${reason}"` : ''}`,
+              involvedIds: JSON.stringify([tf.fighterId]), x: finalX, y: finalY, timestamp: ctx.timestamp,
             });
           }
           break;
